@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
-from glob import glob
-package_name = 'autopatrol_robot'
+
+package_name = 'ugvcar_application'
 
 setup(
     name=package_name,
@@ -10,8 +10,6 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name+'/config', ['config/patrol_config.yaml']),
-        ('share/' + package_name+'/launch', glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -22,8 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'patrol_node=autopatrol_robot.patrol_node:main',
-            'speaker=autopatrol_robot.speaker:main',
+            'init_robot_pose=ugvcar_application.init_robot_pose:main',
         ],
     },
 )
