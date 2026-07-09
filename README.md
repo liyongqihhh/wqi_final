@@ -10,10 +10,10 @@ The current codebase keeps the simulation and navigation parts that are useful f
 wqi_final/
 └── simulation_ws/
     └── src/
-        ├── fishbot_description       # UGV model, Gazebo world, ros2_control config
-        ├── fishbot_navigation2       # Nav2 map, parameters, launch files
-        ├── fishbot_application       # Python Nav2 application examples
-        ├── fishbot_application_cpp   # C++ Nav2 action client example
+        ├── uavcar_description       # UGV model, Gazebo world, ros2_control config
+        ├── uavcar_navigation2       # Nav2 map, parameters, launch files
+        ├── uavcar_application       # Python Nav2 application examples
+        ├── uavcar_application_cpp   # C++ Nav2 action client example
         ├── autopatrol_interfaces     # Service interface used by patrol demo
         ├── autopatrol_robot          # Patrol node, speech node, waypoint config
         ├── nav2_custom_planner       # Custom Nav2 global planner plugin
@@ -22,7 +22,7 @@ wqi_final/
 
 ## Current Capability
 
-- Simulate a FishBot-style UGV in Gazebo.
+- Simulate a UAVcar-style UGV in Gazebo.
 - Run Nav2 localization, planning, and navigation in RViz.
 - Send single goals or waypoint goals through ROS 2 nodes.
 - Run a patrol workflow with speech and image capture.
@@ -41,13 +41,13 @@ source install/setup.bash
 Start Gazebo simulation:
 
 ```bash
-ros2 launch fishbot_description gazebo_sim.launch.py
+ros2 launch uavcar_description gazebo_sim.launch.py
 ```
 
 Start Nav2 and RViz:
 
 ```bash
-ros2 launch fishbot_navigation2 navigation2.launch.py
+ros2 launch uavcar_navigation2 navigation2.launch.py
 ```
 
 Run patrol application:
