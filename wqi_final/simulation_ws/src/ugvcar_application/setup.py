@@ -10,6 +10,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/launch', ['launch/delivery_task.launch.py']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -21,6 +22,7 @@ setup(
     entry_points={
         'console_scripts': [
             'init_robot_pose=ugvcar_application.init_robot_pose:main',
+            'delivery_task=ugvcar_application.delivery_task_manager:main',
         ],
     },
 )
