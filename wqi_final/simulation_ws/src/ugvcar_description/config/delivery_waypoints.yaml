@@ -1,0 +1,62 @@
+# 校园配送航点 — 各建筑门口停车坐标
+# 每个航点包含 x, y, yaw (rad)
+
+logistics_center:
+  x: 0.0
+  y: -43.5
+  yaw: -1.571
+
+cafeteria:
+  x: 38.0
+  y: -20.5
+  yaw: -1.571
+
+teaching_building:
+  x: -40.0
+  y: 9.5
+  yaw: 1.571
+
+innovation_center:
+  x: -20.0
+  y: 40.5
+  yaw: 1.571
+
+library:
+  x: 62.0
+  y: 40.5
+  yaw: 1.571
+
+laboratory:
+  x: 62.0
+  y: 14.0
+  yaw: 1.571
+
+gymnasium:
+  x: 14.0
+  y: 36.0
+  yaw: 1.571
+
+dormitory_1:
+  x: 23.5
+  y: 7.0
+  yaw: -0.927
+
+dormitory_2:
+  x: 36.5
+  y: 7.0
+  yaw: -2.214
+
+dormitory_3:
+  x: 23.5
+  y: 15.0
+  yaw: 0.927
+
+dormitory_4:
+  x: 36.5
+  y: 15.0
+  yaw: 2.214
+
+dormitory_center:
+  x: 30.0
+  y: 11.0
+  yaw: 0.0
