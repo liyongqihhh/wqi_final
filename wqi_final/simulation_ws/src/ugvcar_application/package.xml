@@ -2,13 +2,14 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>ugvcar_application</name>
-  <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="87068644+UGV@users.noreply.github.com">UGV</maintainer>
-  <license>TODO: License declaration</license>
+  <version>0.1.0</version>
+  <description>Optimized Nav2 campus delivery manager for the UGV.</description>
+  <maintainer email="liyongqihhh@users.noreply.github.com">wqi</maintainer>
+  <license>Apache-2.0</license>
 
   <depend>nav2_simple_commander</depend>
   <depend>python3-pyyaml</depend>
+  <depend>uav_navigation</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

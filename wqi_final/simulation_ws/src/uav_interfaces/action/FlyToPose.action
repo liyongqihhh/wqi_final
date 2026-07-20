@@ -1,0 +1,12 @@
+geometry_msgs/PoseStamped target
+float32 position_tolerance
+float32 timeout
+bool allow_platform_proximity
+---
+bool success
+string message
+float32 final_position_error
+---
+string phase
+geometry_msgs/PoseStamped current_pose
+float32 distance_remaining

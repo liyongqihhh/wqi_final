@@ -3,6 +3,7 @@ import launch
 import launch_ros
 from ament_index_python.packages import get_package_share_directory
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.conditions import IfCondition
 
 
 def generate_launch_description():
@@ -12,7 +13,7 @@ def generate_launch_description():
     nav2_bringup_dir = get_package_share_directory('nav2_bringup')
     rviz_config_dir = os.path.join(
         nav2_bringup_dir, 'rviz', 'nav2_default_view.rviz')
-    
+
     # 创建 Launch 配置
     use_sim_time = launch.substitutions.LaunchConfiguration(
         'use_sim_time', default='true')
@@ -20,6 +21,8 @@ def generate_launch_description():
         'map', default=os.path.join(ugvcar_navigation2_dir, 'maps', 'room.yaml'))
     nav2_param_path = launch.substitutions.LaunchConfiguration(
         'params_file', default=os.path.join(ugvcar_navigation2_dir, 'config', 'nav2_params.yaml'))
+    use_rviz = launch.substitutions.LaunchConfiguration(
+        'rviz', default='true')
 
     return launch.LaunchDescription([
         # 声明新的 Launch 参数
@@ -29,6 +32,8 @@ def generate_launch_description():
                                              description='Full path to map file to load'),
         launch.actions.DeclareLaunchArgument('params_file', default_value=nav2_param_path,
                                              description='Full path to param file to load'),
+        launch.actions.DeclareLaunchArgument('rviz', default_value=use_rviz,
+                                             description='Start RViz if true'),
 
         launch.actions.IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -45,5 +50,6 @@ def generate_launch_description():
             name='rviz2',
             arguments=['-d', rviz_config_dir],
             parameters=[{'use_sim_time': use_sim_time}],
-            output='screen'),
+            output='screen',
+            condition=IfCondition(use_rviz)),
     ])

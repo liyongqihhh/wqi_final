@@ -1,5 +1,5 @@
 image: campus_keepout_mask.pgm
-mode: trinary
+mode: scale
 resolution: 0.1
 origin: [-90.0, -80.0, 0.0]
 negate: 0

@@ -1,0 +1,24 @@
+string[] targets
+bool return_home
+string home_name
+float32 landing_height
+# Optional one-to-one package masses. Empty uses waypoint defaults.
+float32[] payload_masses_kg
+# Optional one-to-one delivery floors. Empty uses waypoint defaults.
+int32[] target_floors
+---
+bool feasible
+float32 current_soc
+float32 current_energy_wh
+float32 estimated_mission_energy_wh
+float32 safety_reserve_wh
+float32 required_energy_wh
+float32 estimated_final_soc
+float32 raw_mission_energy_wh
+float32 propulsion_energy_wh
+float32 auxiliary_energy_wh
+float32 payload_energy_penalty_wh
+float32 initial_payload_mass_kg
+float32 battery_capacity_wh
+float32 net_charge_power_w
+string message

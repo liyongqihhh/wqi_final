@@ -1,0 +1,93 @@
+mission:
+  ugv_home: logistics_center
+  navigation_timeout_min: 180.0
+  navigation_timeout_per_meter: 6.0
+  navigation_timeout_max: 900.0
+  navigation_stall_timeout: 180.0
+  navigation_progress_distance: 0.05
+  navigation_progress_angle: 0.10
+  navigation_retry_count: 2
+  navigation_retry_delay: 2.0
+  uav_mission_timeout: 900.0
+  feedback_rate: 2.0
+  ugv_settle_speed: 0.05
+  ugv_settle_duration: 1.5
+  ugv_settle_timeout: 15.0
+  docking_timeout: 15.0
+  uav_landing_height: 0.42
+  # Nav2 is capped at 0.22 m/s. Euclidean distance divided by this speed is a
+  # conservative lower bound on docked charging time during UGV transit.
+  ugv_energy_planning_speed: 0.22
+
+ugv_waypoints:
+  logistics_center: {x: 0.0, y: -43.5, yaw: 1.571}
+  cafeteria_door: {x: 38.0, y: -20.0, yaw: -1.571}
+  dormitory_service_point: {x: 30.0, y: 11.0, yaw: 0.0}
+  laboratory_door: {x: 62.0, y: 19.5, yaw: 1.571}
+  library_door: {x: 62.0, y: 40.5, yaw: 1.571}
+  gymnasium_door: {x: 14.0, y: 39.5, yaw: 1.571}
+  innovation_door: {x: -20.0, y: 40.5, yaw: 1.571}
+  teaching_door: {x: -40.0, y: 9.5, yaw: 1.571}
+
+targets:
+  logistics_center:
+    ugv_launch: logistics_center
+    uav_target: logistics_center
+    uav_home_node: logistics_center
+    payload_mass_kg: 0.0
+  teaching_building:
+    ugv_launch: teaching_door
+    uav_target: teaching_building
+    uav_home_node: teaching_building
+    payload_mass_kg: 0.30
+  laboratory:
+    ugv_launch: laboratory_door
+    uav_target: laboratory
+    uav_home_node: laboratory
+    payload_mass_kg: 0.35
+  library:
+    ugv_launch: library_door
+    uav_target: library
+    uav_home_node: library
+    payload_mass_kg: 0.25
+  innovation_center:
+    ugv_launch: innovation_door
+    uav_target: innovation_center
+    uav_home_node: innovation_center
+    payload_mass_kg: 0.30
+  cafeteria:
+    ugv_launch: cafeteria_door
+    uav_target: cafeteria
+    uav_home_node: cafeteria
+    payload_mass_kg: 0.25
+  gymnasium:
+    ugv_launch: gymnasium_door
+    uav_target: gymnasium
+    uav_home_node: gymnasium
+    payload_mass_kg: 0.30
+  dormitory:
+    ugv_launch: dormitory_service_point
+    # Backward-compatible generic name; explicit missions should use 1-4.
+    uav_target: dormitory_1
+    uav_home_node: dormitory
+    payload_mass_kg: 0.20
+  dormitory_1:
+    ugv_launch: dormitory_service_point
+    uav_target: dormitory_1
+    uav_home_node: dormitory
+    payload_mass_kg: 0.20
+  dormitory_2:
+    ugv_launch: dormitory_service_point
+    uav_target: dormitory_2
+    uav_home_node: dormitory
+    payload_mass_kg: 0.20
+  dormitory_3:
+    ugv_launch: dormitory_service_point
+    uav_target: dormitory_3
+    uav_home_node: dormitory
+    payload_mass_kg: 0.20
+  dormitory_4:
+    ugv_launch: dormitory_service_point
+    uav_target: dormitory_4
+    uav_home_node: dormitory
+    payload_mass_kg: 0.20

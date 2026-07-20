@@ -1,5 +1,5 @@
-# 校园配送航点 — 各建筑门口停车坐标
-# 每个航点包含 x, y, yaw (rad)
+# 校园配送航点 — 各建筑门口或集中服务区的起停坐标
+# 每个航点包含 x, y, yaw (rad)，既可作为出发点，也可作为停车目标。
 
 logistics_center:
   x: 0.0
@@ -8,7 +8,7 @@ logistics_center:
 
 cafeteria:
   x: 38.0
-  y: -20.5
+  y: -20.0
   yaw: -1.571
 
 teaching_building:
@@ -28,33 +28,34 @@ library:
 
 laboratory:
   x: 62.0
-  y: 14.0
+  y: 19.5
   yaw: 1.571
 
 gymnasium:
   x: 14.0
-  y: 36.0
+  y: 39.5
   yaw: 1.571
 
+# 四栋寝室统一在内部道路十字路口中心办理配送。
 dormitory_1:
-  x: 23.5
-  y: 7.0
-  yaw: -0.927
+  x: 30.0
+  y: 11.0
+  yaw: -2.400
 
 dormitory_2:
-  x: 36.5
-  y: 7.0
-  yaw: -2.214
+  x: 30.0
+  y: 11.0
+  yaw: -0.742
 
 dormitory_3:
-  x: 23.5
-  y: 15.0
-  yaw: 0.927
+  x: 30.0
+  y: 11.0
+  yaw: 2.400
 
 dormitory_4:
-  x: 36.5
-  y: 15.0
-  yaw: 2.214
+  x: 30.0
+  y: 11.0
+  yaw: 0.742
 
 dormitory_center:
   x: 30.0

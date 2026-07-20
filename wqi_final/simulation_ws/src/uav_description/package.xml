@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>uav_description</name>
+  <version>0.1.0</version>
+  <description>Campus quadrotor with 3D lidar, down sensors, IMU, and Gazebo dynamics.</description>
+  <maintainer email="liyongqihhh@users.noreply.github.com">wqi</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>gazebo_plugins</depend>
+  <depend>gazebo_ros</depend>
+  <depend>robot_state_publisher</depend>
+  <depend>sensor_msgs</depend>
+  <depend>sjtu_drone_description</depend>
+  <depend>tf2_ros</depend>
+  <depend>xacro</depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

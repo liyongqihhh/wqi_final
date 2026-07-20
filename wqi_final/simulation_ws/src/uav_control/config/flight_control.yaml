@@ -1,0 +1,46 @@
+/**:
+  ros__parameters:
+    use_sim_time: true
+
+/uav/flight_controller:
+  ros__parameters:
+    command_rate: 20.0
+    default_position_tolerance: 0.4
+    default_velocity_tolerance: 0.1
+    settle_duration: 1.0
+    default_timeout: 180.0
+    minimum_altitude: 0.15
+    # Horizontal cruise remains at 15 m; this ceiling permits local facade
+    # ascent to the highest selectable campus floor.
+    maximum_altitude: 45.0
+    odom_wait_timeout: 15.0
+    safety_monitor_enabled: true
+    safety_data_timeout: 1.5
+    obstacle_wait_timeout: 10.0
+    # Keep the sjtu position-loop error bounded and shorten the final approach
+    # so the vehicle cannot overshoot into the 1.8 m obstacle envelope.
+    cruise_position_setpoint_step: 2.0
+    approach_slowdown_distance: 4.0
+    approach_position_setpoint_step: 0.6
+
+/uav/flight_state_monitor:
+  ros__parameters:
+    path_publish_rate: 2.0
+    path_min_distance: 0.1
+    path_max_poses: 3000
+
+/uav/safety_monitor:
+  ros__parameters:
+    safety_radius: 1.8
+    safety_center_height: 0.18
+    self_filter_radius: 0.58
+    lidar_height: 0.45
+    platform_protected_min_height: 1.2
+    down_sensor_height: 0.09
+    diagonal_sensor_height: 0.11
+    diagonal_downward_angle: 0.78539816339
+    diagonal_ground_tolerance: 0.08
+    blind_spot_threshold: 1.8
+    sensor_timeout: 1.0
+    ground_return_tolerance: 0.18
+    publish_rate: 10.0

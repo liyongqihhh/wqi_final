@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>uav_navigation</name>
+  <version>0.1.0</version>
+  <description>Campus UAV waypoints, airspace rules, and RViz visualization.</description>
+  <maintainer email="liyongqihhh@users.noreply.github.com">wqi</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>ament_index_python</depend>
+  <depend>geometry_msgs</depend>
+  <depend>rclpy</depend>
+  <depend>visualization_msgs</depend>
+
+  <test_depend>ament_pytest</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export><build_type>ament_python</build_type></export>
+</package>
