@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""校园配送任务管理器 — 从物流中心出发，按最优顺序访问目标建筑，每站停留 N 秒。"""
+# Copyright 2026 liyongqihhh
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Run campus deliveries in an exactly optimized visit order."""
 
 import math
 import time
@@ -9,14 +23,21 @@ import rclpy
 import yaml
 from geometry_msgs.msg import PoseStamped
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
+from rclpy.duration import Duration
+from uav_navigation.route_optimizer import optimize_visit_order
 
 DEFAULT_WAIT_DURATION = 10.0
 DEFAULT_START_POINT = "logistics_center"
+FEEDBACK_LOG_INTERVAL = 1.0
 
 
 def load_waypoints() -> dict:
-    pkg_share = Path(__file__).resolve().parents[2] / "src" / "ugvcar_description"
-    yaml_path = pkg_share / "config" / "delivery_waypoints.yaml"
+    from ament_index_python.packages import get_package_share_directory
+    yaml_path = (
+        Path(get_package_share_directory("ugvcar_description"))
+        / "config"
+        / "delivery_waypoints.yaml"
+    )
     if not yaml_path.exists():
         raise FileNotFoundError(f"waypoints config not found: {yaml_path}")
     with open(yaml_path, encoding="utf-8") as f:
@@ -28,44 +49,66 @@ def distance(a: dict, b: dict) -> float:
 
 
 def optimize_order(waypoints: dict, targets: list[str], start: str) -> list[str]:
-    """贪心最近邻排序：从起点出发，每次选最近的下一个目标。"""
-    remaining = set(targets)
-    ordered = []
-    current = start
-    while remaining:
-        best = min(remaining, key=lambda t: distance(waypoints[current], waypoints[t]))
-        ordered.append(best)
-        remaining.remove(best)
-        current = best
-    return ordered
+    """Find the exact shortest visit order that returns to the start."""
+    unique_targets = list(dict.fromkeys(targets))
+    plan = optimize_visit_order(
+        len(unique_targets),
+        lambda index: distance(
+            waypoints[start], waypoints[unique_targets[index]]
+        ),
+        lambda origin, destination: distance(
+            waypoints[unique_targets[origin]],
+            waypoints[unique_targets[destination]],
+        ),
+        lambda index: distance(
+            waypoints[unique_targets[index]], waypoints[start]
+        ),
+    )
+    return [unique_targets[index] for index in plan.order]
 
 
 def waypoint_to_pose(wp: dict, navigator: BasicNavigator) -> PoseStamped:
-    from tf_transformations import quaternion_from_euler
-
     pose = PoseStamped()
     pose.header.frame_id = "map"
     pose.header.stamp = navigator.get_clock().now().to_msg()
     pose.pose.position.x = wp["x"]
     pose.pose.position.y = wp["y"]
     pose.pose.position.z = 0.0
-    q = quaternion_from_euler(0, 0, wp["yaw"])
-    pose.pose.orientation.x = q[0]
-    pose.pose.orientation.y = q[1]
-    pose.pose.orientation.z = q[2]
-    pose.pose.orientation.w = q[3]
+    half_yaw = wp["yaw"] / 2.0
+    pose.pose.orientation.z = math.sin(half_yaw)
+    pose.pose.orientation.w = math.cos(half_yaw)
     return pose
+
+
+def wait_for_navigation(navigator: BasicNavigator) -> None:
+    next_log_time = 0.0
+    while not navigator.isTaskComplete():
+        feedback = navigator.getFeedback()
+        now = time.monotonic()
+        if feedback and now >= next_log_time:
+            eta_seconds = Duration.from_msg(
+                feedback.estimated_time_remaining
+            ).nanoseconds / 1e9
+            navigator.get_logger().info(
+                f"  eta: {eta_seconds:.1f}s"
+                f"  dist: {feedback.distance_remaining:.2f}m"
+            )
+            next_log_time = now + FEEDBACK_LOG_INTERVAL
 
 
 def main():
     rclpy.init()
     navigator = BasicNavigator()
 
-    navigator.declare_parameter("delivery_targets", [""])
+    navigator.declare_parameter("delivery_targets", ["teaching_building"])
     navigator.declare_parameter("start_point", DEFAULT_START_POINT)
     navigator.declare_parameter("wait_duration", DEFAULT_WAIT_DURATION)
 
-    targets_raw = navigator.get_parameter("delivery_targets").get_parameter_value().string_array_value
+    targets_raw = (
+        navigator.get_parameter("delivery_targets")
+        .get_parameter_value()
+        .string_array_value
+    )
     start = navigator.get_parameter("start_point").get_parameter_value().string_value
     wait_duration = navigator.get_parameter("wait_duration").get_parameter_value().double_value
 
@@ -91,9 +134,7 @@ def main():
     ordered = optimize_order(waypoints, targets, start)
     navigator.get_logger().info(f"delivery route: {start} -> {' -> '.join(ordered)} -> {start}")
 
-    init_pose = waypoint_to_pose(waypoints[start], navigator)
-    navigator.setInitialPose(init_pose)
-    navigator.waitUntilNav2Active()
+    navigator.waitUntilNav2Active(localizer="map_server")
 
     total_success = 0
     total_failed = 0
@@ -103,14 +144,7 @@ def main():
         navigator.get_logger().info(f"navigating to {name}")
         pose = waypoint_to_pose(waypoints[name], navigator)
         navigator.goToPose(pose)
-
-        while not navigator.isTaskComplete():
-            feedback = navigator.getFeedback()
-            if feedback:
-                navigator.get_logger().info(
-                    f"  eta: {feedback.estimated_time_remaining:.1f}s"
-                    f"  dist: {feedback.distance_remaining:.2f}m"
-                )
+        wait_for_navigation(navigator)
 
         result = navigator.getResult()
         if result == TaskResult.SUCCEEDED:
@@ -131,8 +165,7 @@ def main():
     navigator.get_logger().info(f"returning to {start}")
     home_pose = waypoint_to_pose(waypoints[start], navigator)
     navigator.goToPose(home_pose)
-    while not navigator.isTaskComplete():
-        pass
+    wait_for_navigation(navigator)
     result = navigator.getResult()
     if result == TaskResult.SUCCEEDED:
         navigator.get_logger().info(f"returned to {start}")
@@ -142,7 +175,8 @@ def main():
 
     elapsed = time.time() - start_time
     navigator.get_logger().info(
-        f"delivery complete: {total_success} succeeded, {total_failed} failed, {elapsed:.1f}s total"
+        f"delivery complete: {total_success} succeeded, "
+        f"{total_failed} failed, {elapsed:.1f}s total"
     )
 
     rclpy.shutdown()

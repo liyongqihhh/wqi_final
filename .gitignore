@@ -1,0 +1,26 @@
+# Local migration backup and editor state
+/.git_fishros_backup_*/
+/.vscode/
+
+# Accidental ROS/colcon outputs at the repository root
+/build/
+/install/
+/log/
+
+# ROS/colcon outputs in nested workspaces
+**/build/
+**/install/
+**/log/
+
+# Python and test caches
+**/__pycache__/
+**/.pytest_cache/
+*.py[cod]
+
+# Native build products
+**/CMakeFiles/
+**/CMakeCache.txt
+*.out
+
+# Generated experiment artifacts are summarized under docs instead of Git.
+wqi_final/simulation_ws/experiment_results/

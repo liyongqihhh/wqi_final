@@ -33,8 +33,9 @@ ugvcar_diff_drive_controller:
     #wheels_per_side: 1  # actually 2, but both are controlled by 1 signal
     wheel_radius: 0.032
 
-    # Gazebo contact dynamics make the effective track width about 0.24 m.
-    wheel_separation_multiplier: 1.20
+    # Calibrated against Gazebo ground-truth yaw. Contact dynamics make the
+    # effective track width about 0.226 m instead of the geometric 0.20 m.
+    wheel_separation_multiplier: 1.13
     left_wheel_radius_multiplier: 1.0
     right_wheel_radius_multiplier: 1.0
 
@@ -47,7 +48,22 @@ ugvcar_diff_drive_controller:
     open_loop: false
     enable_odom_tf: true
 
+    # Do not keep executing an old turn through a VirtualBox scheduling gap.
+    # The velocity smoother sends zero after the same 0.5 s timeout.
     cmd_vel_timeout: 0.5
     #publish_limited_velocity: true
     use_stamped_vel: false
     #velocity_rolling_window_size: 10
+
+    linear.x.has_velocity_limits: true
+    linear.x.max_velocity: 1.0
+    linear.x.min_velocity: -0.3
+    linear.x.has_acceleration_limits: true
+    linear.x.max_acceleration: 1.0
+    linear.x.min_acceleration: -1.5
+    angular.z.has_velocity_limits: true
+    angular.z.max_velocity: 0.8
+    angular.z.min_velocity: -0.8
+    angular.z.has_acceleration_limits: true
+    angular.z.max_acceleration: 1.0
+    angular.z.min_acceleration: -1.2

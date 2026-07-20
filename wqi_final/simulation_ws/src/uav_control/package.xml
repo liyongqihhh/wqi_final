@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>uav_control</name>
+  <version>0.1.0</version>
+  <description>ROS 2 flight control and collision safety facade for the campus UAV.</description>
+  <maintainer email="liyongqihhh@users.noreply.github.com">wqi</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>sensor_msgs_py</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>uav_interfaces</depend>
+  <depend>visualization_msgs</depend>
+
+  <exec_depend>python3-yaml</exec_depend>
+
+  <test_depend>ament_pytest</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export><build_type>ament_python</build_type></export>
+</package>

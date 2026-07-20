@@ -1,0 +1,155 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Ground Grid
+      Enabled: true
+      Cell Size: 5
+      Plane Cell Count: 40
+      Color: 120; 120; 120
+      Alpha: 0.5
+    - Alpha: 0.75
+      Class: rviz_default_plugins/Map
+      Color Scheme: map
+      Draw Behind: true
+      Enabled: true
+      Name: Campus Map
+      Topic:
+        Value: /map
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
+      Use Timestamp: false
+    - Class: rviz_default_plugins/RobotModel
+      Name: Campus UAV
+      Enabled: true
+      Description Source: Topic
+      Description Topic:
+        Value: /uav/robot_description
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 5
+      TF Prefix: uav
+      Update Interval: 0
+      Visual Enabled: true
+      Collision Enabled: false
+    - Class: rviz_default_plugins/Path
+      Name: UAV Planned Route
+      Enabled: true
+      Topic:
+        Value: /uav/planned_path
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
+      Line Style: Lines
+      Line Width: 0.12
+      Color: 0; 210; 255
+    - Class: rviz_default_plugins/Path
+      Name: UAV Actual Flight Path
+      Enabled: true
+      Topic:
+        Value: /uav/path
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Line Style: Lines
+      Line Width: 0.08
+      Color: 255; 130; 20
+    - Class: rviz_default_plugins/MarkerArray
+      Name: UAV Delivery Points
+      Enabled: true
+      Topic:
+        Value: /uav/delivery_points
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Name: UAV Top 3D Lidar
+      Enabled: true
+      Color Transformer: FlatColor
+      Color: 0; 255; 120
+      Decay Time: 0.25
+      Position Transformer: XYZ
+      Topic:
+        Value: /uav/lidar/points
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Style: Flat Squares
+      Size (Pixels): 4
+      Size (m): 0.04
+      Selectable: true
+      Use Fixed Frame: true
+      Use rainbow: false
+    - Class: rviz_default_plugins/Marker
+      Name: UAV 3D Safety Sphere
+      Enabled: true
+      Topic:
+        Value: /uav/safety_sphere
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/Marker
+      Name: UAV Battery Status
+      Enabled: true
+      Topic:
+        Value: /uav/battery_marker
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/Image
+      Name: UAV Down Camera
+      Enabled: false
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Normalize Range: true
+      Topic:
+        Value: /uav/down_camera/image_raw
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+  Global Options:
+    Fixed Frame: map
+    Background Color: 35; 38; 42
+    Frame Rate: 20
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 35
+      Focal Point:
+        X: 0
+        Y: -43.5
+        Z: 1
+      Pitch: 0.65
+      Yaw: 0.8
+      Target Frame: map
+Window Geometry:
+  Width: 1280
+  Height: 800

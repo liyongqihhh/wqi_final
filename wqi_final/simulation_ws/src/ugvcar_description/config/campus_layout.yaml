@@ -6,6 +6,18 @@ world_bounds:
 
 map_resolution: 0.1
 
+navigation:
+  # Use a graded road cost: free center, low-cost guidance band, recoverable
+  # shoulder, then lethal off-road. This prevents replanning from anchoring a
+  # transient cornering offset as the new preferred lane.
+  keepout_edge_margin: 1.0
+  # On the 5.5 m main roads this leaves the same 1.0 m zero-cost core used by
+  # the 4.0 m branches, so a shortest-path replan cannot hug one side.
+  guidance_band_width: 1.25
+  minimum_drivable_width: 1.0
+  guidance_band_cost: 12
+  soft_keepout_cost: 35
+
 wall:
   west_x: -88.0
   east_x: 88.0
@@ -19,27 +31,22 @@ wall:
 spawn_pose:
   x: 0.0
   y: -43.0
-  z: 0.065
+  z: 0.005
   yaw: 1.5708
 
 road_widths:
   main: 5.5
   branch: 4.0
-  local_loop: 3.5
-  dorm_cross: 3.0
-  dorm_short: 2.8
-  park: 2.2
-  perimeter: 4.5
 
 paved_areas:
   - name: logistics_loading_platform
     center: [0.0, -43.0]
     size: [18.0, 6.0]
     color: [0.22, 0.22, 0.22, 1.0]
-  - name: park_center_plaza
-    center: [-62.0, 48.0]
-    size: [8.0, 6.0]
-    color: [0.55, 0.55, 0.50, 1.0]
+  - name: dormitory_service_junction
+    center: [30.0, 11.0]
+    size: [6.0, 6.0]
+    color: [0.16, 0.16, 0.16, 1.0]
 
 buildings:
   - name: Logistics Center
@@ -95,7 +102,7 @@ buildings:
     center: [18.0, 0.0]
     size: [14.0, 10.0]
     floors: 10
-    door_direction: northeast
+    door_direction: north
     color: [0.55, 0.78, 0.95, 1.0]
     roof_color: [0.28, 0.44, 0.72, 1.0]
   - name: Dormitory 2
@@ -103,7 +110,7 @@ buildings:
     center: [42.0, 0.0]
     size: [14.0, 10.0]
     floors: 11
-    door_direction: northwest
+    door_direction: north
     color: [0.58, 0.86, 0.58, 1.0]
     roof_color: [0.26, 0.48, 0.26, 1.0]
   - name: Dormitory 3
@@ -111,7 +118,7 @@ buildings:
     center: [18.0, 22.0]
     size: [14.0, 10.0]
     floors: 12
-    door_direction: southeast
+    door_direction: south
     color: [0.72, 0.58, 0.86, 1.0]
     roof_color: [0.40, 0.28, 0.55, 1.0]
   - name: Dormitory 4
@@ -119,7 +126,7 @@ buildings:
     center: [42.0, 22.0]
     size: [14.0, 10.0]
     floors: 13
-    door_direction: southwest
+    door_direction: south
     color: [0.92, 0.58, 0.58, 1.0]
     roof_color: [0.55, 0.28, 0.28, 1.0]
   - name: Gymnasium
@@ -132,184 +139,37 @@ buildings:
     roof_color: [0.30, 0.06, 0.08, 1.0]
 
 roads:
-  - name: main_road
+  - name: south_service_loop
     category: main
     width: 5.5
-    centerline: [[0, -44], [0, -34], [-2, -24], [0, -18], [0, -14], [2, -4], [1, 6], [2, 16], [1, 26], [0, 36], [-4, 44], [-6, 52], [-2, 60], [20, 66], [20, 74]]
-  - name: cafeteria_branch
+    centerline: [[0, -44], [0, -18], [24, -18], [30, -20], [46, -20], [52, -26], [52, -34], [46, -40], [30, -40], [24, -34], [18, -40], [0, -44]]
+  - name: campus_main_trunk
+    category: main
+    width: 5.5
+    centerline: [[0, -18], [10, -14], [20, -11], [30, -10], [30, 11]]
+  - name: east_service_connector
     category: branch
     width: 4.0
-    centerline: [[0, -18], [10, -18], [20, -18], [30, -18], [38, -18]]
-  - name: cafeteria_loop
-    category: local_loop
-    width: 3.5
-    centerline: [[30, -20], [46, -20], [52, -26], [52, -34], [46, -40], [30, -40], [24, -34], [24, -26], [30, -20]]
-  - name: cafeteria_to_dorm
+    centerline: [[46, -20], [52, -14], [54, -8], [54, 11]]
+  - name: north_campus_loop
     category: branch
     width: 4.0
-    centerline: [[46, -20], [50, -16], [50, -12], [46, -10]]
-  - name: cafeteria_to_perimeter
-    category: branch
-    width: 4.0
-    centerline: [[46, -40], [52, -46], [58, -54], [62, -60]]
-  - name: teaching_branch
-    category: branch
-    width: 4.0
-    centerline: [[1, 6], [-8, 7], [-18, 8], [-28, 9], [-40, 9]]
-  - name: teaching_to_park
-    category: branch
-    width: 4.0
-    centerline: [[-40, 9], [-50, 10], [-58, 16], [-62, 24], [-62, 32]]
-  - name: teaching_to_innovation
-    category: branch
-    width: 4.0
-    centerline: [[-40, 9], [-30, 10], [-24, 16], [-18, 26], [-18, 38], [-20, 42]]
-  - name: park_to_innovation_loop
-    category: local_loop
-    width: 3.5
-    centerline: [[-62, 32], [-68, 38], [-70, 48], [-64, 58], [-50, 64], [-34, 62], [-34, 40], [-22, 40], [-20, 42]]
-  - name: park_to_perimeter
-    category: branch
-    width: 4.0
-    centerline: [[-62, 32], [-70, 30], [-80, 22]]
-  - name: innovation_to_perimeter
-    category: branch
-    width: 4.0
-    centerline: [[-20, 42], [-8, 42], [-6, 50], [-8, 60], [-12, 68], [-12, 74]]
-  - name: dorm_center_branch
-    category: branch
-    width: 4.0
-    centerline: [[1.5, 11], [8, 11], [14, 11], [22, 11], [30, 11]]
-  - name: dorm_loop
-    category: local_loop
-    width: 3.5
-    centerline: [[14, -10], [30, -10], [30, -8], [52, -8], [32, -8], [28, 24], [30, 30], [14, 30], [6, 24], [6, -2], [14, -10]]
-  - name: dorm_cross_x
-    category: dorm_cross
-    width: 3.0
-    centerline: [[6, 11], [30, 11], [54, 11]]
-  - name: dorm_cross_y
-    category: dorm_cross
-    width: 3.0
-    centerline: [[30, -10], [30, 11], [30, 32]]
-  - name: dorm_short_1
-    category: dorm_short
-    width: 2.8
-    centerline: [[30, 11], [23.5, 7.0]]
-  - name: dorm_short_2
-    category: dorm_short
-    width: 2.8
-    centerline: [[30, 11], [36.5, 7.0]]
-  - name: dorm_short_3
-    category: dorm_short
-    width: 2.8
-    centerline: [[30, 11], [23.5, 15.0]]
-  - name: dorm_short_4
-    category: dorm_short
-    width: 2.8
-    centerline: [[30, 11], [36.5, 15.0]]
-  - name: dorm_north_to_main
-    category: branch
-    width: 4.0
-    centerline: [[14, 32], [8, 30], [1, 26]]
-  - name: dorm_to_lab
-    category: branch
-    width: 4.0
-    centerline: [[52, -8], [50, 5], [48, 14]]
-  - name: lab_branch
-    category: branch
-    width: 4.0
-    centerline: [[0, 36], [10, 32], [18, 36], [30, 30], [36, 14], [44, 14], [50, 18]]
-  - name: lab_loop
-    category: branch
-    width: 4.0
-    centerline: [[48, 14], [76, 14], [78, 22], [78, 38], [68, 40], [48, 40], [30, 38], [30, 14], [48, 14]]
-  - name: lab_to_gym
-    category: branch
-    width: 4.0
-    centerline: [[68, 40], [60, 42], [40, 40], [30, 38], [30, 38]]
-  - name: gym_loop
-    category: local_loop
-    width: 3.5
-    centerline: [[6, 36], [16, 36], [26, 40], [36, 46], [36, 56], [24, 64], [6, 64], [-4, 56], [-4, 48], [6, 36]]
-  - name: lab_to_library
-    category: branch
-    width: 4.0
-    centerline: [[78, 38], [74, 39], [70, 39], [62, 39]]
-  - name: library_loop
-    category: local_loop
-    width: 3.5
-    centerline: [[54, 39], [70, 39], [76, 45], [76, 57], [70, 63], [54, 63], [48, 57], [48, 45], [54, 39]]
-  - name: gym_to_library_north
-    category: branch
-    width: 4.0
-    centerline: [[22, 64], [30, 68], [42, 69], [54, 63]]
-  - name: park_loop
-    category: park
-    width: 2.2
-    centerline: [[-62, 34], [-68, 38], [-72, 46], [-70, 54], [-64, 60], [-56, 58], [-52, 50], [-54, 42], [-62, 34]]
-  - name: park_s_path
-    category: park
-    width: 2.2
-    centerline: [[-62, 34], [-58, 38], [-66, 44], [-58, 50], [-64, 56], [-60, 60]]
-  - name: park_cross_x
-    category: park
-    width: 2.2
-    centerline: [[-72, 46], [-66, 46], [-60, 48], [-54, 42]]
-  - name: park_diagonal
-    category: park
-    width: 2.2
-    centerline: [[-68, 38], [-62, 44], [-56, 58]]
-  - name: perimeter_loop
-    category: perimeter
-    width: 4.5
-    centerline: [[-56, -64], [-74, -54], [-80, -32], [-82, -6], [-80, 22], [-76, 46], [-66, 64], [-42, 72], [-12, 74], [20, 74], [50, 70], [72, 60], [82, 40], [84, 12], [82, -18], [76, -42], [62, -60], [34, -70], [0, -72], [-32, -70], [-56, -64]]
-  - name: logistics_west_connector
-    category: branch
-    width: 4.0
-    centerline: [[0, -44], [-14, -44], [-28, -54], [-32, -70]]
-  - name: logistics_east_connector
-    category: branch
-    width: 4.0
-    centerline: [[0, -44], [14, -44], [28, -54], [34, -70]]
-
-park:
-  bounds:
-    x_min: -76.0
-    x_max: -48.0
-    y_min: 30.0
-    y_max: 64.0
-  trees:
-    - [-74, 36]
-    - [-74, 60]
-    - [-48, 30]
-    - [-51, 60]
-    - [-49, 35]
-    - [-78, 56]
-    - [-49, 46]
-    - [-57, 35]
-    - [-72, 34]
-    - [-73, 42]
-    - [-49, 57]
-    - [-61, 63]
-    - [-75, 31]
-    - [-50, 32]
-    - [-52, 31]
-    - [-50, 39]
-  shrubs:
-    - [-64, 39]
-    - [-59, 44]
-    - [-67, 52]
-    - [-55, 46]
-    - [-63, 57]
-    - [-70, 50]
+    centerline: [[30, 11], [54, 11], [62, 19.5], [76, 20], [76, 38], [62, 40.5], [48, 40], [30, 38], [14, 39.5], [0, 36], [-8, 42], [-20, 40.5], [-34, 40], [-54, 38], [-62, 32], [-62, 24], [-58, 16], [-56, 9.5], [-40, 9.5], [-28, 9], [-18, 8], [-8, 7], [6, 11], [30, 11]]
 
 delivery_points:
-  - name: logistics_pad
-    center: [12, -43]
-  - name: teaching_pad
-    center: [-40, 8]
-  - name: dorm_pad
+  - name: logistics_center_stop
+    center: [0, -43.5]
+  - name: cafeteria_stop
+    center: [38, -20.0]
+  - name: teaching_building_stop
+    center: [-40, 9.5]
+  - name: innovation_center_stop
+    center: [-20, 40.5]
+  - name: library_stop
+    center: [62, 40.5]
+  - name: laboratory_stop
+    center: [62, 19.5]
+  - name: gymnasium_stop
+    center: [14, 39.5]
+  - name: dormitory_center_stop
     center: [30, 11]
-  - name: lab_pad
-    center: [78, 30]

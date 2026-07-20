@@ -2,18 +2,23 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>ugvcar_navigation2</name>
-  <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="87068644+UGV@users.noreply.github.com">UGV</maintainer>
-  <license>TODO: License declaration</license>
+  <version>0.1.0</version>
+  <description>Nav2 maps, costmaps, behavior trees, and launch files for the UGV.</description>
+  <maintainer email="liyongqihhh@users.noreply.github.com">wqi</maintainer>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>nav2_regulated_pure_pursuit_controller</depend>
   <depend>nav2_smac_planner</depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
   <exec_depend>nav2_costmap_2d</exec_depend>
+  <exec_depend>nav2_common</exec_depend>
   <exec_depend>nav2_lifecycle_manager</exec_depend>
   <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

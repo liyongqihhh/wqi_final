@@ -1,0 +1,37 @@
+namespace: /uav
+
+# Gains are inherited from the tested sjtu_drone ROS 2 configuration.
+rollpitchProportionalGain: 10.0
+rollpitchDifferentialGain: 5.0
+rollpitchLimit: 0.5
+yawProportionalGain: 2.0
+yawDifferentialGain: 1.0
+yawLimit: 1.5
+velocityXYProportionalGain: 5.0
+velocityXYDifferentialGain: 2.3
+velocityXYLimit: 2.0
+velocityZProportionalGain: 5.0
+velocityZIntegralGain: 0.0
+velocityZDifferentialGain: 1.0
+velocityZLimit: -1.0
+positionXYProportionalGain: 1.1
+positionXYDifferentialGain: 0.0
+positionXYIntegralGain: 0.0
+# The upstream limit clamps absolute setpoints, not controller output. Campus
+# coordinates extend well beyond +/-5 m, so global position commands must not
+# be clipped around the Gazebo origin.
+positionXYLimit: -1.0
+positionZProportionalGain: 1.0
+positionZDifferentialGain: 0.2
+positionZIntegralGain: 0.0
+positionZLimit: -1.0
+maxForce: 30.0
+motionSmallNoise: 0.0
+motionDriftNoise: 0.0
+motionDriftNoiseTime: 50.0
+
+# Controlled landing keeps the vehicle in LANDING state until the skids reach
+# the ground instead of cutting motor force after a fixed one-second delay.
+landingVelocity: 0.35
+landingHeight: 0.0
+landingTolerance: 0.04

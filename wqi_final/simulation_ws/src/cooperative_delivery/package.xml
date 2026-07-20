@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>cooperative_delivery</name>
+  <version>0.1.0</version>
+  <description>Coordinated UGV-UAV campus delivery and Gazebo docking.</description>
+  <maintainer email="liyongqihhh@users.noreply.github.com">wqi</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <depend>ament_index_python</depend>
+  <depend>action_msgs</depend>
+  <depend>cooperative_delivery_interfaces</depend>
+  <depend>gazebo_dev</depend>
+  <depend>gazebo_ros</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav2_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>uav_interfaces</depend>
+  <depend>uav_navigation</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>uav_application</exec_depend>
+  <exec_depend>uav_description</exec_depend>
+  <exec_depend>ugvcar_description</exec_depend>
+  <exec_depend>ugvcar_navigation2</exec_depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <gazebo_ros plugin_path="${prefix}/lib"/>
+  </export>
+</package>

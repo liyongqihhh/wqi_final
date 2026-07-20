@@ -1,0 +1,68 @@
+/uav/battery_manager:
+  ros__parameters:
+    # 6S LiPo-style simulation pack. Energy is integrated from the modeled
+    # electrical power; no real current sensor is used.
+    capacity_wh: 100.0
+    nominal_voltage: 22.2
+    empty_voltage: 19.8
+    full_voltage: 25.2
+    initial_percentage: 0.80
+    discharge_efficiency: 0.92
+
+    # A mission is accepted only when predicted flight energy plus reserve is
+    # available. The margin covers tracking error and unplanned safety holds.
+    reserve_percentage: 0.20
+    prediction_margin_factor: 1.25
+    warning_percentage: 0.25
+    critical_percentage: 0.10
+
+    # Geometry and mass match the campus UAV instead of the much larger
+    # reference aircraft used in the Zeng paper examples. The URDF total mass
+    # is 1.477 kg: 1.20 kg airframe plus 0.277 kg simulated sensors.
+    airframe_mass_kg: 1.20
+    sensor_mass_kg: 0.277
+    maximum_payload_mass_kg: 1.00
+    default_payload_mass_kg: 0.30
+    rotor_count: 4
+    rotor_radius_m: 0.12
+    air_density_kgpm3: 1.225
+    gravity_mps2: 9.80665
+
+    # Zeng horizontal-flight model and Dai dynamic TWR extension. The blade
+    # profile term is calibrated so the unloaded hover battery draw is about
+    # 240 W after auxiliary loads and discharge efficiency are included.
+    blade_profile_power_w: 105.0
+    induced_power_correction: 0.10
+    rotor_tip_speed_mps: 120.0
+    fuselage_drag_ratio: 0.60
+    rotor_solidity: 0.05
+    horizontal_flat_plate_area_m2: 0.030
+    vertical_flat_plate_area_m2: 0.080
+
+    # Constant non-propulsion electrical loads.
+    computer_power_w: 12.0
+    lidar_power_w: 8.0
+    camera_power_w: 3.0
+    communication_power_w: 2.0
+    landed_idle_power_w: 8.0
+    docked_idle_power_w: 5.0
+
+    # Charging is enabled only while /uav/docked is true.
+    charge_power_w: 180.0
+    charge_efficiency: 0.90
+
+    # Trapezoidal/triangular speed profiles are integrated with the physical
+    # power model during preflight prediction. Runtime inputs come from odom.
+    estimated_horizontal_speed_mps: 1.2
+    estimated_horizontal_acceleration_mps2: 0.8
+    estimated_vertical_speed_mps: 0.6
+    estimated_vertical_acceleration_mps2: 0.5
+    model_integration_step_s: 0.10
+    hover_speed_threshold_mps: 0.12
+    vertical_motion_threshold_mps: 0.08
+    motion_acceleration_threshold_mps2: 0.20
+    acceleration_filter_alpha: 0.25
+
+    update_rate: 10.0
+    publish_rate: 2.0
+    maximum_update_step_s: 1.0

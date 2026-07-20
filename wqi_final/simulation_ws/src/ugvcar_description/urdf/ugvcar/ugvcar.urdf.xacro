@@ -1,5 +1,6 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="ugvcar">
+    <xacro:arg name="visualize_sensor_rays" default="false" />
     <xacro:include filename="$(find ugvcar_description)/urdf/ugvcar/base.urdf.xacro" />
     <!-- 传感器组件 -->
     <xacro:include filename="$(find ugvcar_description)/urdf/ugvcar/sensor/imu.urdf.xacro" />
@@ -26,4 +27,18 @@
     <xacro:ugvcar_ros2_control />
     <xacro:include filename="$(find ugvcar_description)/urdf/ugvcar/plugins/gazebo_sensor_plugin.xacro" />
     <xacro:gazebo_sensor_plugin />
+
+    <!-- Simulation ground truth used to keep map/RViz aligned with Gazebo. -->
+    <gazebo>
+        <plugin name="ugvcar_ground_truth" filename="libgazebo_ros_p3d.so">
+            <ros>
+                <namespace>/</namespace>
+                <remapping>odom:=ground_truth/odom</remapping>
+            </ros>
+            <body_name>base_footprint</body_name>
+            <frame_name>world</frame_name>
+            <update_rate>50.0</update_rate>
+            <gaussian_noise>0.0</gaussian_noise>
+        </plugin>
+    </gazebo>
 </robot>

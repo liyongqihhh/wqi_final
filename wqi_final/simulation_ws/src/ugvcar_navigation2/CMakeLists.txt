@@ -23,9 +23,13 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-install(DIRECTORY launch maps config
+install(DIRECTORY launch maps config behavior_trees
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  scripts/gazebo_ground_truth_localizer.py
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 ament_package()

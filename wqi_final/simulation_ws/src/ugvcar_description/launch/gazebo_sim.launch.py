@@ -1,75 +1,133 @@
-import launch
-import launch_ros
+import os
+
 from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    IncludeLaunchDescription,
+    RegisterEventHandler,
+)
+from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import Command, LaunchConfiguration
+from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
+
 
 def generate_launch_description():
-    # 获取默认路径
-    robot_name_in_model = "ugvcar"
-    urdf_tutorial_path = get_package_share_directory('ugvcar_description')
-    default_model_path = urdf_tutorial_path + '/urdf/ugvcar/ugvcar.urdf.xacro'
-    default_world_path = urdf_tutorial_path + '/world/custom_room.world'
-    # 为 Launch 声明参数
-    action_declare_arg_mode_path = launch.actions.DeclareLaunchArgument(
-        name='model', default_value=str(default_model_path),
-        description='URDF 的绝对路径')
-    # 获取文件内容生成新的参数
-    robot_description = launch_ros.parameter_descriptions.ParameterValue(
-        launch.substitutions.Command(
-            ['xacro ', launch.substitutions.LaunchConfiguration('model')]),
-        value_type=str)
-  	
-    robot_state_publisher_node = launch_ros.actions.Node(
-        package='robot_state_publisher',
-        executable='robot_state_publisher',
-        parameters=[{'robot_description': robot_description}]
+    description_dir = get_package_share_directory("ugvcar_description")
+    gazebo_ros_dir = get_package_share_directory("gazebo_ros")
+    default_model = os.path.join(
+        description_dir,
+        "urdf",
+        "ugvcar",
+        "ugvcar.urdf.xacro",
+    )
+    default_world = os.path.join(description_dir, "world", "custom_room.world")
+
+    model = LaunchConfiguration("model")
+    world = LaunchConfiguration("world")
+    gui = LaunchConfiguration("gui")
+    use_sim_time = LaunchConfiguration("use_sim_time")
+    visualize_sensor_rays = LaunchConfiguration("visualize_sensor_rays")
+
+    robot_description = ParameterValue(
+        Command(
+            [
+                "xacro ",
+                model,
+                " visualize_sensor_rays:=",
+                visualize_sensor_rays,
+            ]
+        ),
+        value_type=str,
     )
 
-    # 通过 IncludeLaunchDescription 包含另外一个 launch 文件
-    launch_gazebo = launch.actions.IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([get_package_share_directory(
-            'gazebo_ros'), '/launch', '/gazebo.launch.py']),
-      	# 传递参数
-        launch_arguments=[('world', default_world_path),('verbose','true')]
-    )
-    # 请求 Gazebo 加载机器人
-    spawn_entity_node = launch_ros.actions.Node(
-        package='gazebo_ros',
-        executable='spawn_entity.py',
-        arguments=['-topic', '/robot_description',
-                   '-entity', robot_name_in_model, ])
-    
-    # 加载并激活 ugvcar_joint_state_broadcaster 控制器
-    load_joint_state_controller = launch.actions.ExecuteProcess(
-        cmd=['ros2', 'control', 'load_controller', '--set-state', 'active',
-            'ugvcar_joint_state_broadcaster'],
-        output='screen'
+    robot_state_publisher = Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        parameters=[
+            {
+                "robot_description": robot_description,
+                "use_sim_time": use_sim_time,
+            }
+        ],
+        output="screen",
     )
 
-    # 加载并激活 ugvcar_effort_controller 控制器
-    load_ugvcar_effort_controller = launch.actions.ExecuteProcess(
-        cmd=['ros2', 'control', 'load_controller', '--set-state', 'active','ugvcar_effort_controller'], 
-        output='screen')
-    
-    load_ugvcar_diff_drive_controller = launch.actions.ExecuteProcess(
-        cmd=['ros2', 'control', 'load_controller', '--set-state', 'active','ugvcar_diff_drive_controller'], 
-        output='screen')
-    
-    return launch.LaunchDescription([
-        action_declare_arg_mode_path,
-        robot_state_publisher_node,
-        launch_gazebo,
-        spawn_entity_node,
-        # 事件动作，当加载机器人结束后执行    
-        launch.actions.RegisterEventHandler(
-            event_handler=launch.event_handlers.OnProcessExit(
-                target_action=spawn_entity_node,
-                on_exit=[load_joint_state_controller],)
+    gazebo = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(gazebo_ros_dir, "launch", "gazebo.launch.py")
+        ),
+        launch_arguments={
+            "world": world,
+            "gui": gui,
+            "verbose": "true",
+        }.items(),
+    )
+
+    spawn_entity = Node(
+        package="gazebo_ros",
+        executable="spawn_entity.py",
+        arguments=[
+            "-topic",
+            "/robot_description",
+            "-entity",
+            "ugvcar",
+            "-timeout",
+            "120.0",
+        ],
+        output="screen",
+    )
+
+    load_joint_state_controller = ExecuteProcess(
+        cmd=[
+            "ros2",
+            "control",
+            "load_controller",
+            "--set-state",
+            "active",
+            "ugvcar_joint_state_broadcaster",
+        ],
+        output="screen",
+    )
+    load_diff_drive_controller = ExecuteProcess(
+        cmd=[
+            "ros2",
+            "control",
+            "load_controller",
+            "--set-state",
+            "active",
+            "ugvcar_diff_drive_controller",
+        ],
+        output="screen",
+    )
+
+    return LaunchDescription(
+        [
+            DeclareLaunchArgument("model", default_value=default_model),
+            DeclareLaunchArgument("world", default_value=default_world),
+            DeclareLaunchArgument("gui", default_value="true"),
+            DeclareLaunchArgument("use_sim_time", default_value="true"),
+            DeclareLaunchArgument(
+                "visualize_sensor_rays",
+                default_value="false",
             ),
-        # 事件动作，load_ugvcar_diff_drive_controller
-        launch.actions.RegisterEventHandler(
-        event_handler=launch.event_handlers.OnProcessExit(
-            target_action=load_joint_state_controller,
-            on_exit=[load_ugvcar_diff_drive_controller],)
+            robot_state_publisher,
+            gazebo,
+            spawn_entity,
+            RegisterEventHandler(
+                OnProcessExit(
+                    target_action=spawn_entity,
+                    on_exit=[load_joint_state_controller],
+                )
             ),
-    ])
+            RegisterEventHandler(
+                OnProcessExit(
+                    target_action=load_joint_state_controller,
+                    on_exit=[load_diff_drive_controller],
+                )
+            ),
+        ]
+    )

@@ -1,0 +1,217 @@
+flight:
+  home: logistics_center
+  takeoff_altitude: 3.0
+  cruise_altitude: 15.0
+  minimum_corridor_altitude: 8.0
+  maximum_corridor_altitude: 20.0
+  maximum_delivery_altitude: 40.0
+  first_floor_altitude: 1.6
+  floor_height: 3.2
+  delivery_altitude: 3.0
+  landing_approach_altitude: 0.8
+  takeoff_hover_duration: 5.0
+  delivery_hover_duration: 5.0
+  position_tolerance: 0.4
+  segment_timeout: 180.0
+  maximum_obstacle_height: 41.7
+  safety_margin: 2.0
+  obstacle_avoidance_mode: road_corridor_with_3d_safety_sphere
+
+# Most XY coordinates match the UGV building-door stops. The four dormitory
+# targets align with each building's front-door centre while sharing one UGV
+# service stop at the road junction. Their 3.5 m facade standoff covers the
+# safety sphere, braking distance, target tolerance, and residual margin.
+# Floor and altitude are configurable defaults; altitude is the floor centre.
+waypoints:
+  logistics_center:
+    label: Logistics Center UAV Pad
+    x: 0.0
+    y: -43.5
+    yaw: 0.0
+    payload_mass_kg: 0.0
+    maximum_floor: 4
+  teaching_building:
+    label: Teaching Building Floor 3 Delivery
+    x: -40.0
+    y: 9.5
+    yaw: 1.571
+    delivery_floor: 3
+    maximum_floor: 8
+    delivery_altitude: 8.0
+    payload_mass_kg: 0.30
+  laboratory:
+    label: Laboratory Floor 4 Delivery
+    x: 62.0
+    y: 19.5
+    yaw: 1.571
+    delivery_floor: 4
+    maximum_floor: 9
+    delivery_altitude: 11.2
+    payload_mass_kg: 0.35
+  library:
+    label: Library Floor 3 Delivery
+    x: 62.0
+    y: 40.5
+    yaw: 1.571
+    delivery_floor: 3
+    maximum_floor: 7
+    delivery_altitude: 8.0
+    payload_mass_kg: 0.25
+  innovation_center:
+    label: Innovation Center Floor 3 Delivery
+    x: -20.0
+    y: 40.5
+    yaw: 1.571
+    delivery_floor: 3
+    maximum_floor: 6
+    delivery_altitude: 8.0
+    payload_mass_kg: 0.30
+  cafeteria:
+    label: Cafeteria Floor 2 Delivery
+    x: 38.0
+    y: -20.0
+    yaw: -1.571
+    delivery_floor: 2
+    maximum_floor: 5
+    delivery_altitude: 4.8
+    payload_mass_kg: 0.25
+  gymnasium:
+    label: Gymnasium Floor 2 Delivery
+    x: 14.0
+    y: 39.5
+    yaw: 1.571
+    delivery_floor: 2
+    maximum_floor: 3
+    delivery_altitude: 4.8
+    payload_mass_kg: 0.30
+  dormitory_1:
+    label: Dormitory 1 Front Door Floor 3 Delivery
+    x: 18.0
+    y: 8.5
+    yaw: -1.571
+    delivery_floor: 3
+    maximum_floor: 10
+    delivery_altitude: 8.0
+    payload_mass_kg: 0.20
+  dormitory_2:
+    label: Dormitory 2 Front Door Floor 4 Delivery
+    x: 42.0
+    y: 8.5
+    yaw: -1.571
+    delivery_floor: 4
+    maximum_floor: 11
+    delivery_altitude: 11.2
+    payload_mass_kg: 0.20
+  dormitory_3:
+    label: Dormitory 3 Front Door Floor 3 Delivery
+    x: 18.0
+    y: 13.5
+    yaw: 1.571
+    delivery_floor: 3
+    maximum_floor: 12
+    delivery_altitude: 8.0
+    payload_mass_kg: 0.20
+  dormitory_4:
+    label: Dormitory 4 Front Door Floor 4 Delivery
+    x: 42.0
+    y: 13.5
+    yaw: 1.571
+    delivery_floor: 4
+    maximum_floor: 13
+    delivery_altitude: 11.2
+    payload_mass_kg: 0.20
+
+# The 15 m route follows the paved road centerlines, with small corner offsets
+# where the 1.8 m safety sphere needs extra building clearance.
+corridor_nodes:
+  logistics_center: {x: 0.0, y: -43.5}
+  logistics_road_gate: {x: 0.0, y: -44.0}
+  south_junction: {x: 0.0, y: -18.0}
+  south_east_1: {x: 24.0, y: -18.0}
+  cafeteria_west: {x: 30.0, y: -20.0}
+  cafeteria: {x: 38.0, y: -20.0}
+  cafeteria_east: {x: 46.0, y: -20.0}
+  trunk_1: {x: 10.0, y: -14.0}
+  trunk_2: {x: 20.0, y: -11.0}
+  trunk_3: {x: 30.0, y: -10.0}
+  dormitory: {x: 30.0, y: 11.0}
+  dormitory_1: {x: 18.0, y: 8.5}
+  dormitory_2: {x: 42.0, y: 8.5}
+  dormitory_3: {x: 18.0, y: 13.5}
+  dormitory_4: {x: 42.0, y: 13.5}
+  east_connector_1: {x: 52.0, y: -14.0}
+  east_connector_2: {x: 54.0, y: -8.0}
+  east_hub: {x: 54.0, y: 11.0}
+  laboratory_transit: {x: 62.0, y: 17.0}
+  laboratory: {x: 62.0, y: 19.5}
+  east_gate_south: {x: 78.0, y: 17.0}
+  east_gate_north: {x: 78.0, y: 40.5}
+  library: {x: 62.0, y: 40.5}
+  library_east_mid: {x: 78.0, y: 50.0}
+  library_north: {x: 78.0, y: 65.0}
+  north_lane_east: {x: 42.0, y: 65.0}
+  library_west_south: {x: 42.0, y: 40.0}
+  north_east: {x: 48.0, y: 40.0}
+  north_mid: {x: 30.0, y: 38.0}
+  gymnasium: {x: 14.0, y: 39.5}
+  north_zero: {x: 0.0, y: 36.0}
+  north_west_1: {x: -8.0, y: 40.5}
+  innovation_center: {x: -20.0, y: 40.5}
+  north_west_2: {x: -34.0, y: 40.0}
+  north_west_3: {x: -54.0, y: 38.0}
+  north_west_4: {x: -62.0, y: 32.0}
+  north_west_5: {x: -62.0, y: 24.0}
+  north_west_6: {x: -58.0, y: 16.0}
+  north_west_7: {x: -56.0, y: 9.5}
+  teaching_building: {x: -40.0, y: 9.5}
+  west_return_1: {x: -28.0, y: 9.0}
+  west_return_2: {x: -18.0, y: 8.0}
+  west_return_3: {x: -8.0, y: 7.0}
+  west_return_4: {x: 6.0, y: 11.0}
+
+corridor_edges:
+  - [logistics_center, logistics_road_gate]
+  - [logistics_road_gate, south_junction]
+  - [south_junction, south_east_1]
+  - [south_east_1, cafeteria_west]
+  - [cafeteria_west, cafeteria]
+  - [cafeteria, cafeteria_east]
+  - [south_junction, trunk_1]
+  - [trunk_1, trunk_2]
+  - [trunk_2, trunk_3]
+  - [trunk_3, dormitory]
+  - [dormitory, dormitory_1]
+  - [dormitory, dormitory_2]
+  - [dormitory, dormitory_3]
+  - [dormitory, dormitory_4]
+  - [cafeteria_east, east_connector_1]
+  - [east_connector_1, east_connector_2]
+  - [east_connector_2, east_hub]
+  - [dormitory, east_hub]
+  - [east_hub, laboratory_transit]
+  - [laboratory_transit, laboratory]
+  - [laboratory_transit, east_gate_south]
+  - [east_gate_south, east_gate_north]
+  - [east_gate_north, library]
+  - [east_gate_north, library_east_mid]
+  - [library_east_mid, library_north]
+  - [library_north, north_lane_east]
+  - [north_lane_east, library_west_south]
+  - [library_west_south, north_east]
+  - [north_east, north_mid]
+  - [north_mid, gymnasium]
+  - [gymnasium, north_zero]
+  - [north_zero, north_west_1]
+  - [north_west_1, innovation_center]
+  - [innovation_center, north_west_2]
+  - [north_west_2, north_west_3]
+  - [north_west_3, north_west_4]
+  - [north_west_4, north_west_5]
+  - [north_west_5, north_west_6]
+  - [north_west_6, north_west_7]
+  - [north_west_7, teaching_building]
+  - [teaching_building, west_return_1]
+  - [west_return_1, west_return_2]
+  - [west_return_2, west_return_3]
+  - [west_return_3, west_return_4]
+  - [west_return_4, dormitory]

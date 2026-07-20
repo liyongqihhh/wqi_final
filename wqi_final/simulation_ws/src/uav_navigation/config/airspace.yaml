@@ -1,0 +1,15 @@
+frame_id: map
+geofence:
+  x_min: -86.0
+  x_max: 86.0
+  y_min: -76.0
+  y_max: 76.0
+  z_min: 0.15
+  z_max: 45.0
+
+# At 15 m, buildings can be taller than the UAV. Horizontal flight therefore
+# follows the closed road-center corridor graph and uses the local safety sphere.
+strategy: vertical_takeoff_road_corridor_vertical_approach
+cruise_altitude: 15.0
+minimum_obstacle_clearance: 2.0
+safety_sphere_radius: 1.8
