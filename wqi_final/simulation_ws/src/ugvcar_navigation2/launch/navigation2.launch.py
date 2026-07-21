@@ -4,6 +4,7 @@ import launch_ros
 from ament_index_python.packages import get_package_share_directory
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.conditions import IfCondition
+from nav2_common.launch import RewrittenYaml
 
 
 def generate_launch_description():
@@ -11,8 +12,15 @@ def generate_launch_description():
     ugvcar_navigation2_dir = get_package_share_directory(
         'ugvcar_navigation2')
     nav2_bringup_dir = get_package_share_directory('nav2_bringup')
+    nav2_bt_navigator_dir = get_package_share_directory(
+        'nav2_bt_navigator')
     rviz_config_dir = os.path.join(
         nav2_bringup_dir, 'rviz', 'nav2_default_view.rviz')
+    default_nav_to_pose_bt = os.path.join(
+        nav2_bt_navigator_dir,
+        'behavior_trees',
+        'navigate_to_pose_w_replanning_and_recovery.xml',
+    )
 
     # 创建 Launch 配置
     use_sim_time = launch.substitutions.LaunchConfiguration(
@@ -23,6 +31,17 @@ def generate_launch_description():
         'params_file', default=os.path.join(ugvcar_navigation2_dir, 'config', 'nav2_params.yaml'))
     use_rviz = launch.substitutions.LaunchConfiguration(
         'rviz', default='true')
+    room_nav2_params = RewrittenYaml(
+        source_file=nav2_param_path,
+        param_rewrites={
+            'default_nav_to_pose_bt_xml': default_nav_to_pose_bt,
+            'amcl.ros__parameters.initial_pose.x': '0.0',
+            'amcl.ros__parameters.initial_pose.y': '0.0',
+            'amcl.ros__parameters.initial_pose.z': '0.0',
+            'amcl.ros__parameters.initial_pose.yaw': '0.0',
+        },
+        convert_types=True,
+    )
 
     return launch.LaunchDescription([
         # 声明新的 Launch 参数
@@ -35,6 +54,47 @@ def generate_launch_description():
         launch.actions.DeclareLaunchArgument('rviz', default_value=use_rviz,
                                              description='Start RViz if true'),
 
+        launch_ros.actions.Node(
+            package='nav2_map_server',
+            executable='map_server',
+            name='filter_mask_server',
+            output='screen',
+            parameters=[{
+                'use_sim_time': use_sim_time,
+                'yaml_filename': map_yaml_path,
+                'topic_name': '/keepout_filter_mask',
+                'frame_id': 'map',
+            }],
+        ),
+        launch_ros.actions.Node(
+            package='nav2_map_server',
+            executable='costmap_filter_info_server',
+            name='costmap_filter_info_server',
+            output='screen',
+            parameters=[{
+                'use_sim_time': use_sim_time,
+                'type': 0,
+                'filter_info_topic': '/costmap_filter_info',
+                'mask_topic': '/keepout_filter_mask',
+                'base': 0.0,
+                'multiplier': 1.0,
+            }],
+        ),
+        launch_ros.actions.Node(
+            package='nav2_lifecycle_manager',
+            executable='lifecycle_manager',
+            name='lifecycle_manager_keepout',
+            output='screen',
+            parameters=[{
+                'use_sim_time': use_sim_time,
+                'autostart': True,
+                'node_names': [
+                    'filter_mask_server',
+                    'costmap_filter_info_server',
+                ],
+            }],
+        ),
+
         launch.actions.IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 [nav2_bringup_dir, '/launch', '/bringup_launch.py']),
@@ -42,7 +102,9 @@ def generate_launch_description():
             launch_arguments={
                 'map': map_yaml_path,
                 'use_sim_time': use_sim_time,
-                'params_file': nav2_param_path}.items(),
+                'params_file': room_nav2_params,
+                'use_composition': 'False',
+            }.items(),
         ),
         launch_ros.actions.Node(
             package='rviz2',

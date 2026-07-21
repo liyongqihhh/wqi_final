@@ -134,6 +134,7 @@ def generate_launch_description():
                 "map": map_yaml_path,
                 "use_sim_time": use_sim_time,
                 "params_file": configured_nav2_params,
+                "use_composition": "False",
             }.items(),
             condition=use_amcl,
         ),
