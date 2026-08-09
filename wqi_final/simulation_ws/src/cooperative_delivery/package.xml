@@ -19,13 +19,16 @@
   <depend>nav_msgs</depend>
   <depend>rclcpp</depend>
   <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
   <depend>std_srvs</depend>
   <depend>uav_interfaces</depend>
   <depend>uav_navigation</depend>
 
+  <exec_depend>campus_dynamic_obstacles</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>uav_application</exec_depend>
   <exec_depend>uav_description</exec_depend>

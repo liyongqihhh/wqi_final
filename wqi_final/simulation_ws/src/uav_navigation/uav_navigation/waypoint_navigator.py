@@ -332,7 +332,16 @@ class WaypointMap:
             return waypoint.payload_mass_kg
         return float(default_payload_mass_kg)
 
-    def plan_route(self, start: str, goal: str) -> list[Waypoint]:
+    @staticmethod
+    def normalized_edge(start: str, end: str) -> tuple[str, str]:
+        return tuple(sorted((str(start), str(end))))
+
+    def plan_route(
+        self,
+        start: str,
+        goal: str,
+        blocked_edges=None,
+    ) -> list[Waypoint]:
         if start not in self.corridor_nodes or goal not in self.corridor_nodes:
             raise WaypointConfigurationError(
                 f"Cannot plan corridor route from '{start}' to '{goal}'"
@@ -340,6 +349,10 @@ class WaypointMap:
         if start == goal:
             return []
 
+        blocked = {
+            self.normalized_edge(*edge)
+            for edge in (blocked_edges or set())
+        }
         distances = {start: 0.0}
         previous = {}
         queue = [(0.0, start)]
@@ -351,6 +364,8 @@ class WaypointMap:
                 break
             origin = self.corridor_nodes[node]
             for neighbor in self._adjacency[node]:
+                if self.normalized_edge(node, neighbor) in blocked:
+                    continue
                 destination = self.corridor_nodes[neighbor]
                 edge_length = math.hypot(
                     destination.x - origin.x,

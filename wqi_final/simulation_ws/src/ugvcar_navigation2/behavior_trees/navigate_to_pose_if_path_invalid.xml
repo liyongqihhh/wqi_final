@@ -1,40 +1,45 @@
+
 <!--
-  Compute one fresh global path for every NavigateToPose action. Keep that path
-  while the controller is running, then compute again only after a recovery.
-  This avoids both stale paths from a previous mission leg and the steering
-  oscillation caused by replacing a valid controller path every second.
+  This Behavior Tree replans the global path only if the path becomes invalid and it also has
+  recovery actions specific to planning / control as well as general system issues.
+  This will be continuous if a kinematically valid planner is selected.
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
     <RecoveryNode number_of_retries="6" name="NavigateRecovery">
-      <Sequence name="NavigateWithFreshPath">
-        <RecoveryNode number_of_retries="1" name="ComputePathRecovery">
-          <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
-          <ClearEntireCostmap
-            name="ClearGlobalCostmapContext"
-            service_name="global_costmap/clear_entirely_global_costmap"/>
-        </RecoveryNode>
-        <RecoveryNode number_of_retries="1" name="FollowPathRecovery">
+      <PipelineSequence>
+        <RateController hz="2.0" name="RateControllerComputePathToPose">
+          <RecoveryNode number_of_retries="1" name="RecoveryComputePathToPose">
+            <Fallback name="FallbackComputePathToPose">
+              <ReactiveSequence name="CheckIfNewPathNeeded">
+                <Inverter>
+                  <GlobalUpdatedGoal/>
+                </Inverter>
+                <IsPathValid path="{path}"/>
+              </ReactiveSequence>
+              <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            </Fallback>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="RecoveryFollowPath">
           <FollowPath path="{path}" controller_id="FollowPath"/>
-          <ClearEntireCostmap
-            name="ClearLocalCostmapContext"
-            service_name="local_costmap/clear_entirely_local_costmap"/>
+          <Sequence name="ClearAndRecomputePath">
+            <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+          </Sequence>
         </RecoveryNode>
-      </Sequence>
-      <ReactiveFallback name="RecoveryFallback">
+      </PipelineSequence>
+      <ReactiveFallback name="FallbackRecoveries">
         <GoalUpdated/>
         <RoundRobin name="RecoveryActions">
-          <Sequence name="ClearCostmaps">
-            <ClearEntireCostmap
-              name="ClearLocalCostmap"
-              service_name="local_costmap/clear_entirely_local_costmap"/>
-            <ClearEntireCostmap
-              name="ClearGlobalCostmap"
-              service_name="global_costmap/clear_entirely_global_costmap"/>
+          <Sequence name="ClearingActions">
+            <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
           </Sequence>
-          <Spin spin_dist="1.57"/>
-          <Wait wait_duration="5"/>
-          <BackUp backup_dist="0.30" backup_speed="0.05"/>
+          <Spin name="SpinRecovery" spin_dist="1.57"/>
+          <Wait name="WaitRecovery" wait_duration="5"/>
+          <BackUp name="BackUpRecovery" backup_dist="0.30" backup_speed="0.05"/>
         </RoundRobin>
       </ReactiveFallback>
     </RecoveryNode>

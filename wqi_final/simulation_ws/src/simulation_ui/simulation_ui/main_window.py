@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QFrame,
     QGridLayout,
@@ -32,6 +33,7 @@ from PyQt5.QtWidgets import (
 from simulation_ui.config import (
     BUILDING_BY_ID,
     MODE_BY_KEY,
+    OBSTACLE_DENSITIES,
     SIMULATION_MODES,
     CommandBuilder,
     DeliveryItem,
@@ -40,20 +42,30 @@ from simulation_ui.config import (
 )
 from simulation_ui.cargo_editor import CargoEditor
 from simulation_ui.process_manager import ProcessSupervisor
+from simulation_ui.ros_monitor import (
+    RosTelemetryThread,
+    format_battery,
+    format_position,
+    format_safety,
+)
 
 
 class SimulationDashboard(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("校园物流配送仿真控制台")
-        self.setMinimumSize(1080, 720)
-        self.resize(1280, 820)
+        self.setMinimumSize(1180, 760)
+        self.resize(1360, 880)
         self.settings = QSettings("wqi_final", "simulation_dashboard")
         self.command_builder = CommandBuilder()
         self.supervisor = ProcessSupervisor(self.command_builder, self)
         self._battery_before_fixed_mode = 80
+        self._ugv_drive_battery_before_fixed_mode = 80
+        self._ugv_charging_battery_before_fixed_mode = 80
+        self._obstacle_before_fixed_mode = "medium"
         self._launched_mode_key = None
-        self._launched_battery_percent = None
+        self._launched_energy_settings = None
+        self._launched_obstacle_density = None
         self._pending_simulation_commands = None
         self._pending_task = None
         self._task_output_tail = ""
@@ -70,10 +82,18 @@ class SimulationDashboard(QMainWindow):
         self._task_start_timer.setSingleShot(True)
         self._task_start_timer.timeout.connect(self._launch_pending_task)
         self._build_ui()
+        self.telemetry_monitor = RosTelemetryThread(self)
         self._connect_signals()
+        self.telemetry_monitor.telemetry_received.connect(
+            self._update_telemetry
+        )
+        self.telemetry_monitor.connection_changed.connect(
+            self._monitor_connection_changed
+        )
         self._restore_settings()
         self._mode_changed(self.mode_list.currentRow())
         self._append_log("控制台", "界面已启动，等待选择仿真模式。")
+        self.telemetry_monitor.start()
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -136,6 +156,40 @@ class SimulationDashboard(QMainWindow):
         header.addWidget(self.process_count)
         header.addWidget(self.system_status)
         content_layout.addLayout(header)
+        telemetry_panel = QGroupBox("实时系统状态")
+        telemetry_panel.setObjectName("telemetryPanel")
+        telemetry_grid = QGridLayout(telemetry_panel)
+        telemetry_grid.setContentsMargins(16, 18, 16, 12)
+        telemetry_grid.setHorizontalSpacing(18)
+        telemetry_grid.setVerticalSpacing(3)
+        self.telemetry_values = {}
+        telemetry_fields = (
+            ("mission", "任务阶段"),
+            ("battery", "UAV 飞行电池"),
+            ("ugv_drive_battery", "UGV 驱动电池"),
+            ("ugv_charging_battery", "UGV 充电电池"),
+            ("docking", "停靠状态"),
+            ("safety", "UAV 避障"),
+            ("ugv", "UGV 位置"),
+            ("uav", "UAV 位置"),
+            ("environment", "动态环境"),
+            ("monitor", "监控连接"),
+        )
+        for index, (key, title_text) in enumerate(telemetry_fields):
+            row = (index // 5) * 2
+            column = index % 5
+            title_label = QLabel(title_text)
+            title_label.setObjectName("telemetryTitle")
+            value_label = QLabel("--")
+            value_label.setObjectName("telemetryValue")
+            value_label.setMinimumHeight(22)
+            value_label.setWordWrap(True)
+            value_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self.telemetry_values[key] = value_label
+            telemetry_grid.addWidget(title_label, row, column)
+            telemetry_grid.addWidget(value_label, row + 1, column)
+            telemetry_grid.setColumnStretch(column, 1)
+        content_layout.addWidget(telemetry_panel)
 
         splitter = QSplitter(Qt.Vertical)
         splitter.setChildrenCollapsible(False)
@@ -167,6 +221,39 @@ class SimulationDashboard(QMainWindow):
         battery_layout.addWidget(self.battery_slider, 1)
         battery_layout.addWidget(self.battery_spin)
         form.addRow("UAV 初始电量", battery_row)
+
+        drive_battery_row = QWidget()
+        drive_battery_layout = QHBoxLayout(drive_battery_row)
+        drive_battery_layout.setContentsMargins(0, 0, 0, 0)
+        drive_battery_layout.setSpacing(10)
+        self.ugv_drive_battery_slider = QSlider(Qt.Horizontal)
+        self.ugv_drive_battery_slider.setRange(0, 100)
+        self.ugv_drive_battery_spin = QSpinBox()
+        self.ugv_drive_battery_spin.setRange(0, 100)
+        self.ugv_drive_battery_spin.setSuffix(" %")
+        drive_battery_layout.addWidget(self.ugv_drive_battery_slider, 1)
+        drive_battery_layout.addWidget(self.ugv_drive_battery_spin)
+        form.addRow("UGV 驱动电量", drive_battery_row)
+
+        charging_battery_row = QWidget()
+        charging_battery_layout = QHBoxLayout(charging_battery_row)
+        charging_battery_layout.setContentsMargins(0, 0, 0, 0)
+        charging_battery_layout.setSpacing(10)
+        self.ugv_charging_battery_slider = QSlider(Qt.Horizontal)
+        self.ugv_charging_battery_slider.setRange(0, 100)
+        self.ugv_charging_battery_spin = QSpinBox()
+        self.ugv_charging_battery_spin.setRange(0, 100)
+        self.ugv_charging_battery_spin.setSuffix(" %")
+        charging_battery_layout.addWidget(
+            self.ugv_charging_battery_slider, 1
+        )
+        charging_battery_layout.addWidget(self.ugv_charging_battery_spin)
+        form.addRow("UGV 充电电量", charging_battery_row)
+
+        self.obstacle_density = QComboBox()
+        for density in OBSTACLE_DENSITIES:
+            self.obstacle_density.addItem(density.label, density.key)
+        form.addRow("动态障碍密度", self.obstacle_density)
 
         viewer_row = QWidget()
         viewer_layout = QHBoxLayout(viewer_row)
@@ -272,16 +359,81 @@ class SimulationDashboard(QMainWindow):
         splitter.setSizes([500, 220])
         content_layout.addWidget(splitter, 1)
         root_layout.addWidget(content, 1)
+    def _monitor_connection_changed(self, message: str) -> None:
+        self.telemetry_values["monitor"].setText(message)
+        self._append_log("ROS 监控", message)
+
+    def _update_telemetry(self, data: dict) -> None:
+        mission = (
+            data.get("cooperative_status")
+            or data.get("uav_status")
+            or "等待任务"
+        )
+        self.telemetry_values["mission"].setText(mission)
+        self.telemetry_values["battery"].setText(format_battery(
+            data.get("battery_percentage"),
+            data.get("battery_power_w"),
+        ))
+        self.telemetry_values["ugv_drive_battery"].setText(format_battery(
+            data.get("ugv_drive_battery_percentage"),
+            data.get("ugv_drive_power_w"),
+        ))
+        self.telemetry_values["ugv_charging_battery"].setText(
+            format_battery(
+                data.get("ugv_charging_battery_percentage"),
+                data.get("ugv_charging_power_w"),
+            )
+        )
+        docked = data.get("docked")
+        self.telemetry_values["docking"].setText(
+            "--" if docked is None else ("已停靠 / 充电" if docked else "飞行中")
+        )
+        self.telemetry_values["safety"].setText(format_safety(
+            data.get("safety_blocked"),
+            data.get("minimum_distance"),
+        ))
+        self.telemetry_values["ugv"].setText(
+            format_position(data.get("ugv_position"))
+        )
+        self.telemetry_values["uav"].setText(
+            format_position(data.get("uav_position"))
+        )
+        self.telemetry_values["environment"].setText(
+            f"动态障碍 {data.get('dynamic_obstacles', 0)}  |  "
+            f"UAV 重规划 {data.get('uav_replans', 0)}"
+        )
+
 
     def _connect_signals(self) -> None:
         self.mode_list.currentRowChanged.connect(self._mode_changed)
         self.cargo_editor.items_changed.connect(self._configuration_changed)
         self.return_home.toggled.connect(self._configuration_changed)
         self.sensor_rays.toggled.connect(self._configuration_changed)
+        self.obstacle_density.currentIndexChanged.connect(
+            self._obstacle_density_changed
+        )
         self.viewer_group.buttonClicked.connect(self._configuration_changed)
         self.battery_slider.valueChanged.connect(self.battery_spin.setValue)
         self.battery_spin.valueChanged.connect(self.battery_slider.setValue)
         self.battery_spin.valueChanged.connect(self._battery_changed)
+        self.ugv_drive_battery_slider.valueChanged.connect(
+            self.ugv_drive_battery_spin.setValue
+        )
+        self.ugv_drive_battery_spin.valueChanged.connect(
+            self.ugv_drive_battery_slider.setValue
+        )
+        self.ugv_drive_battery_spin.valueChanged.connect(
+            self._battery_changed
+        )
+        self.ugv_charging_battery_slider.valueChanged.connect(
+            self.ugv_charging_battery_spin.setValue
+        )
+        self.ugv_charging_battery_spin.valueChanged.connect(
+            self.ugv_charging_battery_slider.setValue
+        )
+        self.ugv_charging_battery_spin.valueChanged.connect(
+            self._battery_changed
+        )
         self.start_button.clicked.connect(self._start_simulation)
         self.run_button.clicked.connect(self._run_task)
         self.stop_task_button.clicked.connect(
@@ -310,6 +462,26 @@ class SimulationDashboard(QMainWindow):
         battery = self.settings.value("battery", 80, type=int)
         self._battery_before_fixed_mode = battery
         self.battery_spin.setValue(battery)
+        drive_battery = self.settings.value(
+            "ugv_drive_battery", 80, type=int
+        )
+        charging_battery = self.settings.value(
+            "ugv_charging_battery", 80, type=int
+        )
+        self._ugv_drive_battery_before_fixed_mode = drive_battery
+        self._ugv_charging_battery_before_fixed_mode = charging_battery
+        self.ugv_drive_battery_spin.setValue(drive_battery)
+        self.ugv_charging_battery_spin.setValue(charging_battery)
+        density_key = self.settings.value(
+            "obstacle_density", "medium", type=str
+        )
+        density_index = self.obstacle_density.findData(density_key)
+        if density_index < 0:
+            density_index = self.obstacle_density.findData("medium")
+        self._obstacle_before_fixed_mode = str(
+            self.obstacle_density.itemData(density_index)
+        )
+        self.obstacle_density.setCurrentIndex(density_index)
         viewer_name = self.settings.value("viewer", "rviz", type=str)
         try:
             viewer = ViewerMode(viewer_name)
@@ -342,6 +514,17 @@ class SimulationDashboard(QMainWindow):
         self.settings.setValue("floor", first.floor)
         self.settings.setValue("payload", first.payload_kg)
         self.settings.setValue("battery", self._battery_before_fixed_mode)
+        self.settings.setValue(
+            "ugv_drive_battery",
+            self._ugv_drive_battery_before_fixed_mode,
+        )
+        self.settings.setValue(
+            "ugv_charging_battery",
+            self._ugv_charging_battery_before_fixed_mode,
+        )
+        self.settings.setValue(
+            "obstacle_density", self._obstacle_before_fixed_mode
+        )
         self.settings.setValue("viewer", self._current_viewer().value)
         self.settings.setValue("return_home", self.return_home.isChecked())
         self.settings.setValue("sensor_rays", self.sensor_rays.isChecked())
@@ -400,26 +583,69 @@ class SimulationDashboard(QMainWindow):
         )
         self.return_home.setEnabled(mode.has_route_command)
 
-        if mode.key == "cooperative":
-            if self.battery_spin.value() != 100:
-                self._battery_before_fixed_mode = self.battery_spin.value()
-            self.battery_spin.setValue(100)
-            self.battery_spin.setEnabled(False)
-            self.battery_slider.setEnabled(False)
-        elif mode.supports_battery_input:
-            self.battery_spin.setEnabled(True)
-            self.battery_slider.setEnabled(True)
-            if self.battery_spin.value() == 100:
-                self.battery_spin.setValue(self._battery_before_fixed_mode)
+        battery_controls = (
+            (
+                self.battery_spin,
+                self.battery_slider,
+                "_battery_before_fixed_mode",
+            ),
+            (
+                self.ugv_drive_battery_spin,
+                self.ugv_drive_battery_slider,
+                "_ugv_drive_battery_before_fixed_mode",
+            ),
+            (
+                self.ugv_charging_battery_spin,
+                self.ugv_charging_battery_slider,
+                "_ugv_charging_battery_before_fixed_mode",
+            ),
+        )
+        for spin, slider, saved_name in battery_controls:
+            if mode.supports_battery_input:
+                spin.setEnabled(True)
+                slider.setEnabled(True)
+                if spin.value() == 100:
+                    spin.setValue(getattr(self, saved_name))
+            else:
+                if spin.value() != 100:
+                    setattr(self, saved_name, spin.value())
+                spin.setValue(100)
+                spin.setEnabled(False)
+                slider.setEnabled(False)
+
+        if mode.supports_dynamic_obstacles:
+            self.obstacle_density.setEnabled(True)
+            index = self.obstacle_density.findData(
+                self._obstacle_before_fixed_mode
+            )
+            self.obstacle_density.setCurrentIndex(max(0, index))
         else:
-            self.battery_spin.setEnabled(False)
-            self.battery_slider.setEnabled(False)
+            current_density = str(self.obstacle_density.currentData())
+            if current_density != "none":
+                self._obstacle_before_fixed_mode = current_density
+            self.obstacle_density.setCurrentIndex(
+                self.obstacle_density.findData("none")
+            )
+            self.obstacle_density.setEnabled(False)
 
         self._configuration_changed()
 
     def _battery_changed(self, value: int) -> None:
         if self._current_mode().supports_battery_input:
-            self._battery_before_fixed_mode = value
+            self._battery_before_fixed_mode = self.battery_spin.value()
+            self._ugv_drive_battery_before_fixed_mode = (
+                self.ugv_drive_battery_spin.value()
+            )
+            self._ugv_charging_battery_before_fixed_mode = (
+                self.ugv_charging_battery_spin.value()
+            )
+        self._configuration_changed()
+
+    def _obstacle_density_changed(self, _index: int) -> None:
+        if self._current_mode().supports_dynamic_obstacles:
+            self._obstacle_before_fixed_mode = str(
+                self.obstacle_density.currentData()
+            )
         self._configuration_changed()
 
     def _update_stage_note(self) -> None:
@@ -430,21 +656,36 @@ class SimulationDashboard(QMainWindow):
         elif mode.key == "campus_ugv":
             text = (
                 "UGV 将按精确最短闭环顺序访问所选位置；楼层、载荷和"
-                "电量不参与单车阶段计算。"
+                "电量不参与单车阶段计算，不生成动态障碍。"
+            )
+        elif mode.key == "campus_uav":
+            text = (
+                "UAV 按所选楼栋、楼层和载荷执行校园自动导航；本阶段"
+                "关闭电量约束和动态障碍。"
             )
         elif mode.key == "cooperative":
             text = (
-                "初始电量固定为 100%；系统按 UGV 停靠点的最短闭环"
-                "顺序配送全部货物。"
+                "系统按 UGV 停靠点的最短闭环顺序配送全部货物；本阶段"
+                "关闭 UAV/UGV 电量模型和动态障碍。"
             )
         else:
             notice = battery_admission_notice(
-                mode.key, self.battery_spin.value()
+                mode.key,
+                self.battery_spin.value(),
+                self.ugv_drive_battery_spin.value(),
+                self.ugv_charging_battery_spin.value(),
             )
             severity = notice.severity
+            environment_note = (
+                f"动态障碍：{self.obstacle_density.currentText()}。"
+                if mode.supports_dynamic_obstacles
+                else "本阶段不生成动态障碍。"
+            )
             text = (
                 "多件货物将按最短路线排序，楼层和载荷随对应货物一起"
-                "进入实际 UAV 配送 Action。\n"
+                "进入实际 UAV 配送 Action。UGV 驱动电池计入剩余货物"
+                "质量和停靠 UAV 质量，另一块 UGV 电池只负责给 UAV 充电。"
+                f"{environment_note}\n"
                 + notice.message
             )
         self.stage_note.setText(text)
@@ -464,6 +705,13 @@ class SimulationDashboard(QMainWindow):
             self._current_viewer(),
             self.battery_spin.value(),
             self.sensor_rays.isChecked(),
+            ugv_drive_battery_percent=(
+                self.ugv_drive_battery_spin.value()
+            ),
+            ugv_charging_battery_percent=(
+                self.ugv_charging_battery_spin.value()
+            ),
+            obstacle_density=str(self.obstacle_density.currentData()),
         )
 
     def _task_command(self):
@@ -524,7 +772,14 @@ class SimulationDashboard(QMainWindow):
             return
         commands = self._simulation_commands()
         self._launched_mode_key = self._current_mode().key
-        self._launched_battery_percent = self.battery_spin.value()
+        self._launched_energy_settings = (
+            self.battery_spin.value(),
+            self.ugv_drive_battery_spin.value(),
+            self.ugv_charging_battery_spin.value(),
+        )
+        self._launched_obstacle_density = str(
+            self.obstacle_density.currentData()
+        )
         restart = self.supervisor.active_count() > 0
         if restart:
             self.supervisor.stop_all()
@@ -562,19 +817,38 @@ class SimulationDashboard(QMainWindow):
             )
             self._set_task_result("任务状态：未发送，需先启动当前模式", "warning")
             return
+        current_energy_settings = (
+            self.battery_spin.value(),
+            self.ugv_drive_battery_spin.value(),
+            self.ugv_charging_battery_spin.value(),
+        )
         if (
             mode.supports_battery_input
-            and self._launched_battery_percent != self.battery_spin.value()
+            and self._launched_energy_settings != current_energy_settings
         ):
             QMessageBox.warning(
                 self,
                 "初始电量尚未生效",
-                f"当前仿真是以 {self._launched_battery_percent}% 电量启动的，"
-                f"界面已改为 {self.battery_spin.value()}%。初始电量只在启动时"
-                "载入，请点击“启动仿真”重启后再发送任务。",
+                "UAV、UGV 驱动或 UGV 充电电池的初始电量已被修改。"
+                "初始电量只在启动时载入，请点击“启动仿真”重启后再发送任务。",
             )
             self._set_task_result(
                 "任务状态：未发送，修改后的电量需要重启仿真才能生效",
+                "warning",
+            )
+            return
+        if (
+            mode.supports_dynamic_obstacles
+            and self._launched_obstacle_density
+            != str(self.obstacle_density.currentData())
+        ):
+            QMessageBox.warning(
+                self,
+                "动态障碍密度尚未生效",
+                "密度只在启动仿真时载入。请点击“启动仿真”重启后再发送任务。",
+            )
+            self._set_task_result(
+                "任务状态：未发送，修改后的障碍密度需要重启仿真",
                 "warning",
             )
             return
@@ -608,7 +882,10 @@ class SimulationDashboard(QMainWindow):
     def _confirm_low_battery_task(self) -> bool:
         mode = self._current_mode()
         notice = battery_admission_notice(
-            mode.key, self.battery_spin.value()
+            mode.key,
+            self.battery_spin.value(),
+            self.ugv_drive_battery_spin.value(),
+            self.ugv_charging_battery_spin.value(),
         )
         if not notice.requires_confirmation:
             return True
@@ -675,6 +952,25 @@ class SimulationDashboard(QMainWindow):
         if "goal accepted with id" in lowered:
             self._set_task_result("任务状态：目标已接受，正在执行", "running")
             self._set_status("配送执行中", "running")
+            return
+
+        phase_match = re.match(r"\s*phase:\s*([A-Z_]+)", line)
+        if phase_match:
+            phase = phase_match.group(1)
+            phase_labels = {
+                "PREPARING": "准备协同接口",
+                "OPTIMIZING_ROUTE": "正在优化校园配送路线",
+                "UGV_TRANSIT": "UGV 正在前往配送点",
+                "UGV_SETTLING": "UGV 到点并等待稳定",
+                "UAV_DETACHING": "UAV 正在解锁起飞",
+                "UAV_DELIVERING": "UAV 正在执行楼层配送",
+                "UAV_DOCKING": "UAV 正在返回并停靠",
+                "RETURNING_HOME": "UGV 正在返回物流中心",
+                "COMPLETED": "配送完成",
+                "FAILED": "配送失败",
+            }
+            label = phase_labels.get(phase, phase)
+            self._set_task_result(f"任务状态：{label}", "running")
             return
 
         rejection = re.search(
@@ -789,4 +1085,5 @@ class SimulationDashboard(QMainWindow):
         self._simulation_start_timer.stop()
         self._task_start_timer.stop()
         self.supervisor.stop_all()
+        self.telemetry_monitor.stop()
         event.accept()

@@ -5,6 +5,7 @@ import math
 class CooperativePhase(str, Enum):
     IDLE = "IDLE"
     PREPARING = "PREPARING"
+    OPTIMIZING_ROUTE = "OPTIMIZING_ROUTE"
     UGV_TRANSIT = "UGV_TRANSIT"
     UGV_SETTLING = "UGV_SETTLING"
     UAV_DETACHING = "UAV_DETACHING"
@@ -74,6 +75,43 @@ class NavigationProgressTracker:
 
         self.anchor = pose
         return True
+
+
+class NavigationArrivalTracker:
+    """Confirm that the physical vehicle remains inside a goal region."""
+
+    def __init__(
+        self,
+        position_tolerance: float,
+        confirmation_duration: float,
+    ) -> None:
+        values = (position_tolerance, confirmation_duration)
+        if not all(math.isfinite(value) and value > 0.0 for value in values):
+            raise ValueError("Navigation arrival limits must be positive")
+        self.position_tolerance = float(position_tolerance)
+        self.confirmation_duration = float(confirmation_duration)
+        self.inside_since = None
+        self.last_timestamp = None
+
+    def update(self, distance: float, timestamp: float) -> bool:
+        distance = float(distance)
+        timestamp = float(timestamp)
+        if not math.isfinite(distance) or not math.isfinite(timestamp):
+            self.inside_since = None
+            return False
+        if (
+            self.last_timestamp is not None
+            and timestamp < self.last_timestamp
+        ):
+            self.inside_since = None
+        self.last_timestamp = timestamp
+        if distance > self.position_tolerance:
+            self.inside_since = None
+            return False
+        if self.inside_since is None:
+            self.inside_since = timestamp
+            return False
+        return timestamp - self.inside_since >= self.confirmation_duration
 
 
 def navigation_timeout_for_distance(

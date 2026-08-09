@@ -32,7 +32,9 @@ install(TARGETS ugv_uav_docking_plugin
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
-install(PROGRAMS scripts/cooperative_mission_manager
+install(PROGRAMS
+  scripts/cooperative_mission_manager
+  scripts/ugv_energy_manager
   DESTINATION lib/${PROJECT_NAME}
 )
 install(DIRECTORY config launch rviz
@@ -43,6 +45,7 @@ if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_pytest_test(test_logger_calls test/test_logger_calls.py)
   ament_add_pytest_test(test_energy_planner test/test_energy_planner.py)
+  ament_add_pytest_test(test_ugv_energy_model test/test_ugv_energy_model.py)
   ament_add_pytest_test(test_mission_config test/test_mission_config.py)
   ament_add_pytest_test(test_mission_states test/test_mission_states.py)
 endif()

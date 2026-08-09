@@ -107,6 +107,24 @@ def generate_launch_description():
             }.items(),
         ),
         launch_ros.actions.Node(
+            package='nav2_collision_monitor',
+            executable='collision_monitor',
+            name='collision_monitor',
+            output='screen',
+            parameters=[room_nav2_params],
+        ),
+        launch_ros.actions.Node(
+            package='nav2_lifecycle_manager',
+            executable='lifecycle_manager',
+            name='lifecycle_manager_collision_monitor',
+            output='screen',
+            parameters=[{
+                'use_sim_time': use_sim_time,
+                'autostart': True,
+                'node_names': ['collision_monitor'],
+            }],
+        ),
+        launch_ros.actions.Node(
             package='rviz2',
             executable='rviz2',
             name='rviz2',

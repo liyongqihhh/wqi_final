@@ -13,6 +13,7 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -21,6 +22,9 @@ def generate_launch_description():
     uav_description_share = get_package_share_directory("uav_description")
     uav_application_share = get_package_share_directory("uav_application")
     cooperative_share = get_package_share_directory("cooperative_delivery")
+    dynamic_obstacles_share = get_package_share_directory(
+        "campus_dynamic_obstacles"
+    )
 
     ugv_sim_launch = os.path.join(
         ugv_description_share, "launch", "campus_delivery_sim.launch.py"
@@ -34,6 +38,9 @@ def generate_launch_description():
     uav_application_launch = os.path.join(
         uav_application_share, "launch", "uav_delivery.launch.py"
     )
+    dynamic_obstacles_launch = os.path.join(
+        dynamic_obstacles_share, "launch", "dynamic_obstacles.launch.py"
+    )
     rviz_config = os.path.join(cooperative_share, "rviz", "cooperative.rviz")
     campus_map = os.path.join(
         ugv_navigation_share, "maps", "campus_delivery_map.yaml"
@@ -44,6 +51,15 @@ def generate_launch_description():
     nav2_params = os.path.join(
         ugv_navigation_share, "config", "nav2_params.yaml"
     )
+    ugv_energy_config = os.path.join(
+        cooperative_share, "config", "ugv_energy_model.yaml"
+    )
+    default_mission_config = os.path.join(
+        cooperative_share, "config", "cooperative_waypoints.yaml"
+    )
+    default_obstacle_config = os.path.join(
+        dynamic_obstacles_share, "config", "obstacle_routes.yaml"
+    )
 
     gui = LaunchConfiguration("gui")
     rviz = LaunchConfiguration("rviz")
@@ -52,11 +68,31 @@ def generate_launch_description():
     uav_spawn_delay = LaunchConfiguration("uav_spawn_delay")
     uav_application_delay = LaunchConfiguration("uav_application_delay")
     manager_delay = LaunchConfiguration("manager_delay")
+    dynamic_obstacle_delay = LaunchConfiguration(
+        "dynamic_obstacle_delay"
+    )
     rviz_delay = LaunchConfiguration("rviz_delay")
     visualize_sensor_rays = LaunchConfiguration("visualize_sensor_rays")
     initial_battery_percentage = LaunchConfiguration(
         "initial_battery_percentage"
     )
+    initial_ugv_drive_battery_percentage = LaunchConfiguration(
+        "initial_ugv_drive_battery_percentage"
+    )
+    initial_ugv_charging_battery_percentage = LaunchConfiguration(
+        "initial_ugv_charging_battery_percentage"
+    )
+    enable_energy_constraints = LaunchConfiguration(
+        "enable_energy_constraints"
+    )
+    enable_dynamic_obstacles = LaunchConfiguration(
+        "enable_dynamic_obstacles"
+    )
+    combined_robot_radius = "0.60"
+    obstacle_density = LaunchConfiguration("obstacle_density")
+    random_seed = LaunchConfiguration("random_seed")
+    obstacle_config_file = LaunchConfiguration("obstacle_config_file")
+    mission_config = LaunchConfiguration("mission_config")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -75,11 +111,50 @@ def generate_launch_description():
             default_value="0.80",
             description="Initial UAV battery state of charge in the range 0 to 1.",
         ),
-        DeclareLaunchArgument("navigation_delay", default_value="5.0"),
-        DeclareLaunchArgument("uav_spawn_delay", default_value="12.0"),
-        DeclareLaunchArgument("uav_application_delay", default_value="17.0"),
-        DeclareLaunchArgument("manager_delay", default_value="21.0"),
-        DeclareLaunchArgument("rviz_delay", default_value="8.0"),
+        DeclareLaunchArgument(
+            "initial_ugv_drive_battery_percentage",
+            default_value="0.80",
+            description="Initial UGV traction battery SOC in the range 0 to 1.",
+        ),
+        DeclareLaunchArgument(
+            "initial_ugv_charging_battery_percentage",
+            default_value="0.80",
+            description="Initial UGV UAV-charging battery SOC in the range 0 to 1.",
+        ),
+        DeclareLaunchArgument(
+            "enable_energy_constraints",
+            default_value="false",
+            description="Enable UAV and dual-pack UGV energy constraints.",
+        ),
+        DeclareLaunchArgument(
+            "enable_dynamic_obstacles",
+            default_value="false",
+            description="Start the campus dynamic obstacle generator.",
+        ),
+        DeclareLaunchArgument(
+            "obstacle_density",
+            default_value="none",
+            description="Dynamic obstacle density: none, low, medium or high.",
+        ),
+        DeclareLaunchArgument("random_seed", default_value="42"),
+        DeclareLaunchArgument(
+            "obstacle_config_file",
+            default_value=default_obstacle_config,
+            description="Dynamic obstacle route YAML; defaults to the four-density campus set.",
+        ),
+        DeclareLaunchArgument(
+            "mission_config",
+            default_value=default_mission_config,
+            description="Cooperative mission waypoint configuration.",
+        ),
+        DeclareLaunchArgument("navigation_delay", default_value="15.0"),
+        DeclareLaunchArgument("uav_spawn_delay", default_value="28.0"),
+        DeclareLaunchArgument(
+            "dynamic_obstacle_delay", default_value="34.0"
+        ),
+        DeclareLaunchArgument("uav_application_delay", default_value="38.0"),
+        DeclareLaunchArgument("manager_delay", default_value="44.0"),
+        DeclareLaunchArgument("rviz_delay", default_value="48.0"),
         DeclareLaunchArgument(
             "visualize_sensor_rays",
             default_value="false",
@@ -115,6 +190,12 @@ def generate_launch_description():
                                 "initial_x": "0.0",
                                 "initial_y": "-43.5",
                                 "initial_yaw": "1.5708",
+                                "dynamic_obstacles": enable_dynamic_obstacles,
+                                # The 0.60 m circle covers the 0.56 m docked UAV
+                                # envelope while retaining enough road width for
+                                # Nav2 to replan around a moving obstacle.
+                                # Standalone UGV uses its 0.22 m physical radius.
+                                "robot_radius": combined_robot_radius,
                             }.items(),
                         )
                     ],
@@ -141,11 +222,35 @@ def generate_launch_description():
         TimerAction(
             period=uav_application_delay,
             actions=[
+                Node(
+                    package="cooperative_delivery",
+                    executable="ugv_energy_manager",
+                    namespace="ugv",
+                    name="energy_manager",
+                    output="screen",
+                    condition=IfCondition(enable_energy_constraints),
+                    parameters=[
+                        ugv_energy_config,
+                        {
+                            "use_sim_time": use_sim_time,
+                            "initial_drive_percentage": ParameterValue(
+                                initial_ugv_drive_battery_percentage,
+                                value_type=float,
+                            ),
+                            "initial_charging_percentage": ParameterValue(
+                                initial_ugv_charging_battery_percentage,
+                                value_type=float,
+                            ),
+                        },
+                    ],
+                ),
                 IncludeLaunchDescription(
                     PythonLaunchDescriptionSource(uav_application_launch),
                     launch_arguments={
                         "use_sim_time": use_sim_time,
                         "initial_battery_percentage": initial_battery_percentage,
+                        "enable_energy_constraints": enable_energy_constraints,
+                        "external_charger_control": "true",
                     }.items(),
                 )
             ],
@@ -159,7 +264,29 @@ def generate_launch_description():
                     namespace="cooperative_delivery",
                     name="mission_manager",
                     output="screen",
-                    parameters=[{"use_sim_time": use_sim_time}],
+                    parameters=[{
+                        "use_sim_time": use_sim_time,
+                        "energy_constraints_enabled": ParameterValue(
+                            enable_energy_constraints, value_type=bool
+                        ),
+                        "mission_config": mission_config,
+                        "ugv_energy_config": ugv_energy_config,
+                    }],
+                )
+            ],
+        ),
+        TimerAction(
+            period=dynamic_obstacle_delay,
+            actions=[
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(dynamic_obstacles_launch),
+                    condition=IfCondition(enable_dynamic_obstacles),
+                    launch_arguments={
+                        "use_sim_time": use_sim_time,
+                        "density": obstacle_density,
+                        "random_seed": random_seed,
+                        "config_file": obstacle_config_file,
+                    }.items(),
                 )
             ],
         ),

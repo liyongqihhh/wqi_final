@@ -24,6 +24,7 @@ import yaml
 from geometry_msgs.msg import PoseStamped
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
 from rclpy.duration import Duration
+from uav_navigation.road_network import RoadNetwork, RoadNetworkError
 from uav_navigation.route_optimizer import optimize_visit_order
 
 DEFAULT_WAIT_DURATION = 10.0
@@ -44,25 +45,39 @@ def load_waypoints() -> dict:
         return yaml.safe_load(f)
 
 
+def load_road_network() -> RoadNetwork:
+    from ament_index_python.packages import get_package_share_directory
+    layout_path = (
+        Path(get_package_share_directory("ugvcar_description"))
+        / "config"
+        / "campus_layout.yaml"
+    )
+    return RoadNetwork.from_yaml(layout_path)
+
+
 def distance(a: dict, b: dict) -> float:
     return math.hypot(a["x"] - b["x"], a["y"] - b["y"])
 
 
-def optimize_order(waypoints: dict, targets: list[str], start: str) -> list[str]:
+def optimize_order(
+    waypoints: dict,
+    targets: list[str],
+    start: str,
+    route_distance=None,
+) -> list[str]:
     """Find the exact shortest visit order that returns to the start."""
     unique_targets = list(dict.fromkeys(targets))
+    metric = route_distance or (
+        lambda first, second: distance(waypoints[first], waypoints[second])
+    )
     plan = optimize_visit_order(
         len(unique_targets),
-        lambda index: distance(
-            waypoints[start], waypoints[unique_targets[index]]
+        lambda index: metric(start, unique_targets[index]),
+        lambda origin, destination: metric(
+            unique_targets[origin],
+            unique_targets[destination],
         ),
-        lambda origin, destination: distance(
-            waypoints[unique_targets[origin]],
-            waypoints[unique_targets[destination]],
-        ),
-        lambda index: distance(
-            waypoints[unique_targets[index]], waypoints[start]
-        ),
+        lambda index: metric(unique_targets[index], start),
     )
     return [unique_targets[index] for index in plan.order]
 
@@ -131,10 +146,33 @@ def main():
         rclpy.shutdown()
         return
 
-    ordered = optimize_order(waypoints, targets, start)
-    navigator.get_logger().info(f"delivery route: {start} -> {' -> '.join(ordered)} -> {start}")
-
     navigator.waitUntilNav2Active(localizer="map_server")
+
+    try:
+        road_network = load_road_network()
+
+        def road_distance(first, second):
+            first_waypoint = waypoints[first]
+            second_waypoint = waypoints[second]
+            return road_network.distance(
+                (first_waypoint["x"], first_waypoint["y"]),
+                (second_waypoint["x"], second_waypoint["y"]),
+            )
+
+        ordered = optimize_order(
+            waypoints, targets, start, route_distance=road_distance
+        )
+        route_source = "CAMPUS_ROAD_GRAPH"
+    except RoadNetworkError as error:
+        navigator.get_logger().warning(
+            f"road-graph optimization unavailable: {error}"
+        )
+        ordered = optimize_order(waypoints, targets, start)
+        route_source = "EUCLIDEAN_FALLBACK"
+    navigator.get_logger().info(
+        f"delivery route [{route_source}]: {start} -> "
+        f"{' -> '.join(ordered)} -> {start}"
+    )
 
     total_success = 0
     total_failed = 0

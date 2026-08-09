@@ -1,0 +1,16 @@
+densities:
+  rear_catch: {ground: 1, air: 0}
+
+# Dedicated straight-road regression for the UGV predictive controller. The
+# actor starts behind and slightly left of an eastbound UGV, catches it at
+# 0.70 m/s, then reverses before the cafeteria delivery bay to create a front
+# encounter while the UGV is still navigating.
+routes:
+  rear_diagonal_catch:
+    layer: ground
+    speed_mps: 0.70
+    radius_m: 0.45
+    height_m: 1.60
+    waypoints:
+      - [0.0, -18.5, 0.8]
+      - [30.0, -20.0, 0.8]

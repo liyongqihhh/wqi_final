@@ -30,6 +30,8 @@ DroneSimpleControllerPrivate::DroneSimpleControllerPrivate()
   , odom_seq(0)
   , odom_hz(30)
   , last_odom_publish_time_(0.0)
+  , last_state_publish_time_(0.0)
+  , last_ground_truth_publish_time_(0.0)
 {
 }
 
@@ -58,6 +60,9 @@ void DroneSimpleControllerPrivate::Reset()
   angular_velocity.Set();
   acceleration.Set();
   euler.Set();
+  last_odom_publish_time_ = 0.0;
+  last_state_publish_time_ = 0.0;
+  last_ground_truth_publish_time_ = 0.0;
 }
 
 // ROS Node configuration
@@ -463,10 +468,14 @@ void DroneSimpleControllerPrivate::UpdateState(double dt)
     m_timeAfterCmd = 0;
   }
 
-  // publish current state using pub_state
-  std_msgs::msg::Int8 state_msg;
-  state_msg.data = navi_state;
-  pub_state->publish(state_msg);
+  // State changes are slow; publishing at the odometry rate avoids flooding
+  // every Python subscriber at the 1 kHz Gazebo physics update rate.
+  if (current_time.Double() - last_state_publish_time_ >= 1.0 / odom_hz) {
+    std_msgs::msg::Int8 state_msg;
+    state_msg.data = navi_state;
+    pub_state->publish(state_msg);
+    last_state_publish_time_ = current_time.Double();
+  }
 }
 
 
@@ -490,34 +499,35 @@ void DroneSimpleControllerPrivate::UpdateDynamics(double dt)
   acceleration = (link->WorldLinearVel() - velocity) / dt;
   velocity = link->WorldLinearVel();
 
-  //publish the ground truth pose of the drone to the ROS topic
-  geometry_msgs::msg::Pose gt_pose;
-  gt_pose.position.x = pose.Pos().X();
-  gt_pose.position.y = pose.Pos().Y();
-  gt_pose.position.z = pose.Pos().Z();
+  if (
+    current_time.Double() - last_ground_truth_publish_time_ >=
+    1.0 / odom_hz)
+  {
+    geometry_msgs::msg::Pose gt_pose;
+    gt_pose.position.x = pose.Pos().X();
+    gt_pose.position.y = pose.Pos().Y();
+    gt_pose.position.z = pose.Pos().Z();
+    gt_pose.orientation.w = pose.Rot().W();
+    gt_pose.orientation.x = pose.Rot().X();
+    gt_pose.orientation.y = pose.Rot().Y();
+    gt_pose.orientation.z = pose.Rot().Z();
+    pub_gt_pose_->publish(gt_pose);
 
-  gt_pose.orientation.w = pose.Rot().W();
-  gt_pose.orientation.x = pose.Rot().X();
-  gt_pose.orientation.y = pose.Rot().Y();
-  gt_pose.orientation.z = pose.Rot().Z();
-  pub_gt_pose_->publish(gt_pose);
-
-  //convert the acceleration and velocity into the body frame
-  ignition::math::v6::Vector3<double> body_vel = pose.Rot().RotateVector(velocity);
-  ignition::math::v6::Vector3<double> body_acc = pose.Rot().RotateVector(acceleration);
-
-  //publish the velocity
-  geometry_msgs::msg::Twist tw;
-  tw.linear.x = body_vel.X();
-  tw.linear.y = body_vel.Y();
-  tw.linear.z = body_vel.Z();
-  pub_gt_vec_->publish(tw);
-
-  //publish the acceleration
-  tw.linear.x = body_acc.X();
-  tw.linear.y = body_acc.Y();
-  tw.linear.z = body_acc.Z();
-  pub_gt_acc_->publish(tw);
+    const ignition::math::v6::Vector3<double> body_vel =
+      pose.Rot().RotateVector(velocity);
+    const ignition::math::v6::Vector3<double> body_acc =
+      pose.Rot().RotateVector(acceleration);
+    geometry_msgs::msg::Twist tw;
+    tw.linear.x = body_vel.X();
+    tw.linear.y = body_vel.Y();
+    tw.linear.z = body_vel.Z();
+    pub_gt_vec_->publish(tw);
+    tw.linear.x = body_acc.X();
+    tw.linear.y = body_acc.Y();
+    tw.linear.z = body_acc.Z();
+    pub_gt_acc_->publish(tw);
+    last_ground_truth_publish_time_ = current_time.Double();
+  }
 
 
   ignition::math::v6::Vector3<double> poschange = pose.Pos() - position;

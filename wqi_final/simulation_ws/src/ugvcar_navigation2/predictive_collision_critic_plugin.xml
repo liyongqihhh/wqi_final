@@ -1,0 +1,14 @@
+<library path="ugvcar_predictive_collision_critic">
+  <class
+    name="ugvcar_navigation2::PredictiveCollisionCritic"
+    type="ugvcar_navigation2::PredictiveCollisionCritic"
+    base_class_type="dwb_core::TrajectoryCritic">
+    <description>Future collision-time critic for moving obstacle tracks.</description>
+  </class>
+  <class
+    name="ugvcar_navigation2::PathHeadingCritic"
+    type="ugvcar_navigation2::PathHeadingCritic"
+    base_class_type="dwb_core::TrajectoryCritic">
+    <description>Low-speed alignment critic for newly replanned path headings.</description>
+  </class>
+</library>

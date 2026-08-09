@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+from pathlib import Path
+import xml.sax.saxutils
+
+from ament_index_python.packages import get_package_share_directory
+from gazebo_msgs.srv import SpawnEntity
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import Int32, String
+
+from campus_dynamic_obstacles.scenario import (
+    load_obstacle_config,
+    obstacle_instance_name,
+    select_routes,
+)
+
+
+class DynamicObstacleSpawner(Node):
+    def __init__(self) -> None:
+        super().__init__("dynamic_obstacle_spawner")
+        default_config = Path(
+            get_package_share_directory("campus_dynamic_obstacles")
+        ) / "config" / "obstacle_routes.yaml"
+        self.declare_parameter("density", "none")
+        self.declare_parameter("random_seed", 42)
+        self.declare_parameter("config_file", str(default_config))
+        self.density = str(self.get_parameter("density").value)
+        self.seed = int(self.get_parameter("random_seed").value)
+        densities, routes = load_obstacle_config(
+            self.get_parameter("config_file").value
+        )
+        self.routes = select_routes(densities, routes, self.density, self.seed)
+        qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.scenario_pub = self.create_publisher(
+            String, "/dynamic_obstacles/scenario", qos
+        )
+        self.count_pub = self.create_publisher(
+            Int32, "/dynamic_obstacles/count", qos
+        )
+        self.client = self.create_client(SpawnEntity, "/spawn_entity")
+        self.spawned = False
+        self.create_timer(0.5, self._spawn_once)
+        self.pending = 0
+        self.failures = []
+
+    @staticmethod
+    def _sdf(name, route) -> str:
+        escaped_name = xml.sax.saxutils.escape(name)
+        points = "\n".join(
+            f"      <waypoint>{x:.3f} {y:.3f} {z:.3f}</waypoint>"
+            for x, y, z in route.waypoints
+        )
+        if route.layer == "air":
+            geometry = (
+                f"<sphere><radius>{route.radius_m:.3f}</radius></sphere>"
+            )
+            color = "0.85 0.18 0.10 1"
+        else:
+            geometry = (
+                "<cylinder>"
+                f"<radius>{route.radius_m:.3f}</radius>"
+                f"<length>{route.height_m:.3f}</length>"
+                "</cylinder>"
+            )
+            color = "0.95 0.72 0.08 1"
+        x, y, z = route.waypoints[0]
+        mass = 1.0 if route.layer == "ground" else 0.5
+        return f"""<?xml version='1.0'?>
+<sdf version='1.6'>
+  <model name='{escaped_name}'>
+    <pose>{x:.3f} {y:.3f} {z:.3f} 0 0 0</pose>
+    <static>false</static>
+    <allow_auto_disable>false</allow_auto_disable>
+    <link name='body'>
+      <gravity>false</gravity>
+      <inertial><mass>{mass:.3f}</mass></inertial>
+      <collision name='collision'><geometry>{geometry}</geometry></collision>
+      <visual name='visual'>
+        <geometry>{geometry}</geometry>
+        <material><ambient>{color}</ambient><diffuse>{color}</diffuse></material>
+      </visual>
+    </link>
+    <plugin name='route_controller' filename='libcampus_dynamic_obstacle_plugin.so'>
+      <speed>{route.speed_mps:.3f}</speed>
+      <arrival_tolerance>0.25</arrival_tolerance>
+      <max_acceleration>1.20</max_acceleration>
+{points}
+    </plugin>
+    <plugin name='ground_truth_{escaped_name}' filename='libgazebo_ros_p3d.so'>
+      <ros>
+        <remapping>odom:=/dynamic_obstacles/{escaped_name}/odom</remapping>
+      </ros>
+      <body_name>body</body_name>
+      <frame_name>world</frame_name>
+      <update_rate>20.0</update_rate>
+      <gaussian_noise>0.0</gaussian_noise>
+    </plugin>
+  </model>
+</sdf>
+"""
+
+    def _spawn_once(self) -> None:
+        if self.spawned or not self.client.service_is_ready():
+            self.client.wait_for_service(timeout_sec=0.1)
+            return
+        self.spawned = True
+        self.pending = len(self.routes)
+        if self.pending == 0:
+            self._publish_result()
+            return
+        for index, route in enumerate(self.routes, start=1):
+            name = obstacle_instance_name(index, route)
+            request = SpawnEntity.Request()
+            request.name = name
+            request.xml = self._sdf(name, route)
+            request.robot_namespace = "/dynamic_obstacles"
+            future = self.client.call_async(request)
+            future.add_done_callback(
+                lambda completed, obstacle=name, selected=route: self._spawn_done(
+                    completed, obstacle, selected
+                )
+            )
+
+    def _spawn_done(self, future, name, route) -> None:
+        try:
+            response = future.result()
+        except Exception as error:
+            response = None
+            self.failures.append(f"{name}: {error}")
+        if response is None or not response.success:
+            if response is not None:
+                self.failures.append(f"{name}: {response.status_message}")
+        else:
+            self.get_logger().info(
+                f"Spawned {name} ({route.layer}, {route.speed_mps:.2f} m/s)"
+            )
+        self.pending -= 1
+        if self.pending == 0:
+            self._publish_result()
+
+    def _publish_result(self) -> None:
+        description = (
+            f"density={self.density};seed={self.seed};count={len(self.routes)}"
+        )
+        if self.failures:
+            description += ";failures=" + "|".join(self.failures)
+            self.get_logger().error(description)
+        else:
+            self.get_logger().info(description)
+        self.scenario_pub.publish(String(data=description))
+        self.count_pub.publish(
+            Int32(data=len(self.routes) - len(self.failures))
+        )
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = DynamicObstacleSpawner()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            node.destroy_node()
+        except KeyboardInterrupt:
+            pass
+        if rclpy.ok():
+            try:
+                rclpy.shutdown()
+            except (KeyboardInterrupt, RuntimeError):
+                pass
+
+
+if __name__ == "__main__":
+    main()

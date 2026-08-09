@@ -2,6 +2,7 @@ import pytest
 
 from cooperative_delivery.mission_states import (
     CooperativePhase,
+    NavigationArrivalTracker,
     NavigationProgressTracker,
     is_terminal,
     is_vehicle_settled,
@@ -12,6 +13,7 @@ from cooperative_delivery.mission_states import (
 def test_cooperative_state_machine_has_required_vehicle_handoffs():
     phases = {phase.value for phase in CooperativePhase}
     assert {
+        "OPTIMIZING_ROUTE",
         "UGV_TRANSIT",
         "UGV_SETTLING",
         "UAV_DETACHING",
@@ -70,3 +72,29 @@ def test_navigation_progress_handles_wrapped_yaw():
     assert not tracker.update(0.0, 0.0, 3.13)
     assert not tracker.update(0.0, 0.0, -3.13)
     assert tracker.update(0.0, 0.0, -2.9)
+
+
+def test_navigation_arrival_requires_continuous_physical_presence():
+    tracker = NavigationArrivalTracker(0.35, 0.60)
+
+    assert not tracker.update(0.34, 10.0)
+    assert not tracker.update(0.20, 10.5)
+    assert tracker.update(0.10, 10.61)
+
+
+def test_navigation_arrival_resets_after_leaving_goal_region():
+    tracker = NavigationArrivalTracker(0.35, 0.60)
+
+    assert not tracker.update(0.20, 10.0)
+    assert not tracker.update(0.40, 10.5)
+    assert not tracker.update(0.20, 11.0)
+    assert not tracker.update(0.20, 11.5)
+    assert tracker.update(0.20, 11.61)
+
+
+def test_navigation_arrival_rejects_invalid_limits_and_samples():
+    with pytest.raises(ValueError):
+        NavigationArrivalTracker(0.0, 0.60)
+    tracker = NavigationArrivalTracker(0.35, 0.60)
+    assert not tracker.update(float("nan"), 10.0)
+    assert not tracker.update(0.10, float("nan"))

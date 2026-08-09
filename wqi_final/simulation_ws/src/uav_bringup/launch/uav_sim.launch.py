@@ -37,6 +37,9 @@ def generate_launch_description():
     initial_battery_percentage = LaunchConfiguration(
         "initial_battery_percentage"
     )
+    enable_energy_constraints = LaunchConfiguration(
+        "enable_energy_constraints"
+    )
 
     return LaunchDescription([
         DeclareLaunchArgument("world", default_value=campus_world),
@@ -65,6 +68,11 @@ def generate_launch_description():
             "initial_battery_percentage",
             default_value="0.80",
             description="Initial UAV battery state of charge in the range 0 to 1.",
+        ),
+        DeclareLaunchArgument(
+            "enable_energy_constraints",
+            default_value="false",
+            description="Enable UAV battery consumption and task admission.",
         ),
         DeclareLaunchArgument(
             "visualize_sensor_rays",
@@ -134,6 +142,8 @@ def generate_launch_description():
             launch_arguments={
                 "use_sim_time": use_sim_time,
                 "initial_battery_percentage": initial_battery_percentage,
+                "enable_energy_constraints": enable_energy_constraints,
+                "external_charger_control": "false",
             }.items(),
         ),
         TimerAction(

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import math
 from pathlib import Path
+from typing import Callable
 
 import yaml
 from uav_navigation.route_optimizer import RoutePlan, optimize_visit_order
@@ -142,6 +143,8 @@ class CooperativeMissionConfig:
             "navigation_stall_timeout",
             "navigation_progress_distance",
             "navigation_progress_angle",
+            "ugv_arrival_position_tolerance",
+            "ugv_arrival_confirmation_duration",
             "navigation_retry_delay",
             "uav_mission_timeout",
             "feedback_rate",
@@ -151,6 +154,8 @@ class CooperativeMissionConfig:
             "docking_timeout",
             "uav_landing_height",
             "ugv_energy_planning_speed",
+            "route_planner_server_timeout",
+            "route_planner_timeout",
         ):
             self._positive_float(name)
         self._nonnegative_int("navigation_retry_count")
@@ -182,11 +187,24 @@ class CooperativeMissionConfig:
         targets: list[DeliveryTarget],
         return_home: bool,
     ) -> tuple[list[DeliveryTarget], RoutePlan]:
-        values = list(targets)
-        home = self.ugv_home
-
         def distance(first: GroundWaypoint, second: GroundWaypoint) -> float:
             return math.hypot(second.x - first.x, second.y - first.y)
+
+        return self.optimize_targets_with_distance(
+            targets,
+            return_home,
+            distance,
+        )
+
+    def optimize_targets_with_distance(
+        self,
+        targets: list[DeliveryTarget],
+        return_home: bool,
+        distance: Callable[[GroundWaypoint, GroundWaypoint], float],
+    ) -> tuple[list[DeliveryTarget], RoutePlan]:
+        """Optimize target order using the supplied traversable-route cost."""
+        values = list(targets)
+        home = self.ugv_home
 
         plan = optimize_visit_order(
             len(values),

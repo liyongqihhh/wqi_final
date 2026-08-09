@@ -16,7 +16,17 @@
     odom_wait_timeout: 15.0
     safety_monitor_enabled: true
     safety_data_timeout: 1.5
-    obstacle_wait_timeout: 10.0
+    dynamic_replanning_enabled: true
+    dynamic_replan_period: 0.5
+    dynamic_path_clearance: 2.5
+    dynamic_path_spacing: 0.5
+    dynamic_path_lookahead: 1.5
+    dynamic_obstacle_warning_distance: 6.0
+    dynamic_rear_warning_distance: 4.0
+    dynamic_target_clearance: 1.5
+    obstacle_vector_timeout: 1.0
+    # Require several clear observations before replacing an active detour.
+    dynamic_clear_confirmations: 3
     # Keep the sjtu position-loop error bounded and shorten the final approach
     # so the vehicle cannot overshoot into the 1.8 m obstacle envelope.
     cruise_position_setpoint_step: 2.0
@@ -43,4 +53,12 @@
     blind_spot_threshold: 1.8
     sensor_timeout: 1.0
     ground_return_tolerance: 0.18
+    # Use a local surface patch instead of one noisy ray, then keep the same
+    # obstacle association unless a replacement is confirmed repeatedly.
+    obstacle_patch_depth: 0.35
+    obstacle_patch_radius: 0.75
+    obstacle_vector_alpha: 0.35
+    obstacle_vector_association_distance: 0.9
+    obstacle_vector_switch_confirmations: 3
+    obstacle_vector_maximum_hold_updates: 3
     publish_rate: 10.0

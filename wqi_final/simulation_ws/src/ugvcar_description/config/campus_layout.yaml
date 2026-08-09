@@ -11,6 +11,17 @@ navigation:
   # shoulder, then lethal off-road. This prevents replanning from anchoring a
   # transient cornering offset as the new preferred lane.
   keepout_edge_margin: 1.0
+  # The local controller gets a narrower soft shoulder so a valid global
+  # detour can use more paved width without weakening the lethal road edge.
+  local_keepout_edge_margin: 0.65
+  # Stage six uses the whole paved surface for a predictive lane change. The
+  # road edge itself remains lethal; only the static-stage guidance shoulder
+  # is removed from the dynamic mask.
+  dynamic_keepout_edge_margin: 0.0
+  # Stage six adds only a soft-cost recovery strip outside the rasterized road
+  # edge. It lets DWB steer a one-cell cornering overshoot back onto pavement;
+  # the area outside this strip remains lethal.
+  dynamic_recovery_margin: 0.30
   # On the 5.5 m main roads this leaves the same 1.0 m zero-cost core used by
   # the 4.0 m branches, so a shortest-path replan cannot hug one side.
   guidance_band_width: 1.25

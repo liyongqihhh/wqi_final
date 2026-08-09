@@ -103,7 +103,6 @@ def generate_launch_description():
         ],
         output="screen",
     )
-
     return LaunchDescription(
         [
             DeclareLaunchArgument("model", default_value=default_model),

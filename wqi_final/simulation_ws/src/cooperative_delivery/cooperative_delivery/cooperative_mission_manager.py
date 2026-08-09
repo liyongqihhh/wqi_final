@@ -17,10 +17,14 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from std_msgs.msg import Bool, Int8, String
+from std_msgs.msg import Bool, Float32, Int8, String
 from std_srvs.srv import Trigger
 from uav_interfaces.action import ExecuteDelivery
 from uav_interfaces.srv import CheckDeliveryEnergy
+from uav_navigation.road_network import (
+    RoadNetwork,
+    RoadNetworkError,
+)
 
 from cooperative_delivery.mission_config import (
     CooperativeMissionConfig,
@@ -33,9 +37,14 @@ from cooperative_delivery.energy_planner import (
 )
 from cooperative_delivery.mission_states import (
     CooperativePhase,
+    NavigationArrivalTracker,
     NavigationProgressTracker,
     is_vehicle_settled,
     navigation_timeout_for_distance,
+)
+from cooperative_delivery.ugv_energy_model import (
+    UgvEnergyParameters,
+    estimate_ugv_drive_energy,
 )
 
 
@@ -51,9 +60,35 @@ class CooperativeMissionManager(Node):
             "cooperative_waypoints.yaml",
         )
         self.declare_parameter("mission_config", default_config)
+        default_ugv_energy_config = os.path.join(
+            get_package_share_directory("cooperative_delivery"),
+            "config",
+            "ugv_energy_model.yaml",
+        )
+        self.declare_parameter("ugv_energy_config", default_ugv_energy_config)
+        self.declare_parameter("energy_constraints_enabled", False)
         self.config = CooperativeMissionConfig(
             str(self.get_parameter("mission_config").value)
         )
+        self.energy_constraints_enabled = bool(
+            self.get_parameter("energy_constraints_enabled").value
+        )
+        self.ugv_energy_parameters = UgvEnergyParameters.from_yaml(
+            str(self.get_parameter("ugv_energy_config").value)
+        )
+        road_layout = os.path.join(
+            get_package_share_directory("ugvcar_description"),
+            "config",
+            "campus_layout.yaml",
+        )
+        try:
+            self.road_network = RoadNetwork.from_yaml(road_layout)
+        except RoadNetworkError as error:
+            self.road_network = None
+            self.get_logger().warning(
+                f"Campus road graph unavailable; route ordering will use "
+                f"Euclidean distance: {error}"
+            )
 
         self.callback_group = ReentrantCallbackGroup()
         self.lock = threading.Lock()
@@ -61,6 +96,8 @@ class CooperativeMissionManager(Node):
         self.ugv_ground_truth = None
         self.uav_state = None
         self.docked = False
+        self.ugv_drive_remaining_wh = None
+        self.ugv_charging_remaining_wh = None
         self.nav_distance = 0.0
         self.uav_distance = 0.0
         self.mission_active = False
@@ -144,6 +181,20 @@ class CooperativeMissionManager(Node):
             dock_qos,
             callback_group=self.callback_group,
         )
+        self.create_subscription(
+            Float32,
+            "/ugv/drive_remaining_wh",
+            self._ugv_drive_energy_callback,
+            dock_qos,
+            callback_group=self.callback_group,
+        )
+        self.create_subscription(
+            Float32,
+            "/ugv/charging_remaining_wh",
+            self._ugv_charging_energy_callback,
+            dock_qos,
+            callback_group=self.callback_group,
+        )
         self.status_pub = self.create_publisher(
             String, "mission_status", dock_qos
         )
@@ -152,6 +203,9 @@ class CooperativeMissionManager(Node):
         )
         self.optimized_route_pub = self.create_publisher(
             String, "optimized_route", dock_qos
+        )
+        self.ugv_cargo_mass_pub = self.create_publisher(
+            Float32, "/ugv/cargo_mass_kg", dock_qos
         )
 
         self.action_server = ActionServer(
@@ -164,7 +218,14 @@ class CooperativeMissionManager(Node):
             callback_group=self.callback_group,
         )
         self._set_phase(CooperativePhase.IDLE)
-        self.get_logger().info("Cooperative UGV-UAV mission manager is ready")
+        self._publish_ugv_cargo_mass(0.0)
+        energy_state = (
+            "enabled" if self.energy_constraints_enabled else "disabled"
+        )
+        self.get_logger().info(
+            f"Cooperative UGV-UAV mission manager is ready; energy "
+            f"constraints {energy_state}"
+        )
 
     def _ugv_odom_callback(self, message: Odometry) -> None:
         with self.lock:
@@ -181,6 +242,26 @@ class CooperativeMissionManager(Node):
     def _docked_callback(self, message: Bool) -> None:
         with self.lock:
             self.docked = bool(message.data)
+
+    def _ugv_drive_energy_callback(self, message: Float32) -> None:
+        with self.lock:
+            self.ugv_drive_remaining_wh = float(message.data)
+
+    def _ugv_charging_energy_callback(self, message: Float32) -> None:
+        with self.lock:
+            self.ugv_charging_remaining_wh = float(message.data)
+
+    def _ugv_energy_snapshot(self):
+        with self.lock:
+            return (
+                self.ugv_drive_remaining_wh,
+                self.ugv_charging_remaining_wh,
+            )
+
+    def _publish_ugv_cargo_mass(self, value: float) -> None:
+        self.ugv_cargo_mass_pub.publish(
+            Float32(data=float(max(0.0, value)))
+        )
 
     def _snapshot(self):
         with self.lock:
@@ -239,17 +320,64 @@ class CooperativeMissionManager(Node):
                 payload_mass_kg=payload,
                 delivery_floor=floor,
             ))
-        return self.config.optimize_targets(
-            resolved, bool(request.return_home)
-        )
+        return resolved
 
-    def _publish_optimized_route(self, targets, route_plan, return_home):
+    @staticmethod
+    def _euclidean_distance(
+        first: GroundWaypoint,
+        second: GroundWaypoint,
+    ) -> float:
+        return math.hypot(second.x - first.x, second.y - first.y)
+
+    def _optimize_targets_by_road(self, targets, return_home):
+        def road_distance(first, second):
+            if self.road_network is None:
+                raise RoadNetworkError("campus road graph was not loaded")
+            return self.road_network.distance(
+                (first.x, first.y),
+                (second.x, second.y),
+            )
+
+        try:
+            optimized, plan = self.config.optimize_targets_with_distance(
+                targets,
+                return_home,
+                road_distance,
+            )
+            source = "CAMPUS_ROAD_GRAPH"
+            distance = road_distance
+        except (RoadNetworkError, ValueError) as error:
+            self.get_logger().warning(
+                "Road-graph optimization unavailable; using Euclidean "
+                f"fallback: {error}"
+            )
+            optimized, plan = self.config.optimize_targets(
+                targets,
+                return_home,
+            )
+            source = "EUCLIDEAN_FALLBACK"
+            distance = self._euclidean_distance
+
+        previous = self.config.ugv_home
+        leg_distances = []
+        for target in optimized:
+            leg_distances.append(distance(previous, target.ugv_launch))
+            previous = target.ugv_launch
+        return optimized, plan, leg_distances, source
+
+    def _publish_optimized_route(
+        self,
+        targets,
+        route_plan,
+        return_home,
+        source,
+    ):
         names = [self.config.ugv_home.name]
         names.extend(target.name for target in targets)
         if return_home:
             names.append(self.config.ugv_home.name)
         message = (
-            f"OPTIMAL_UGV_ROUTE {route_plan.total_cost:.2f} m: "
+            f"OPTIMAL_UGV_ROUTE[{source}] {route_plan.total_cost:.2f} m: "
             + " -> ".join(names)
         )
         self.optimized_route_pub.publish(String(data=message))
@@ -305,13 +433,22 @@ class CooperativeMissionManager(Node):
     def _wait_interfaces(self, timeout: float = 45.0) -> bool:
         deadline = time.monotonic() + timeout
         while rclpy.ok() and time.monotonic() < deadline:
+            drive_energy, charging_energy = self._ugv_energy_snapshot()
+            energy_ready = (
+                not self.energy_constraints_enabled
+                or (
+                    self.energy_check_client.service_is_ready()
+                    and drive_energy is not None
+                    and charging_energy is not None
+                )
+            )
             if (
                 self.nav_client.server_is_ready()
                 and self.uav_client.server_is_ready()
                 and self.attach_client.service_is_ready()
                 and self.detach_client.service_is_ready()
                 and self.takeoff_client.service_is_ready()
-                and self.energy_check_client.service_is_ready()
+                and energy_ready
                 and self.clear_local_client.service_is_ready()
                 and self.clear_global_client.service_is_ready()
             ):
@@ -321,7 +458,8 @@ class CooperativeMissionManager(Node):
             self.attach_client.wait_for_service(timeout_sec=0.2)
             self.detach_client.wait_for_service(timeout_sec=0.2)
             self.takeoff_client.wait_for_service(timeout_sec=0.2)
-            self.energy_check_client.wait_for_service(timeout_sec=0.2)
+            if self.energy_constraints_enabled:
+                self.energy_check_client.wait_for_service(timeout_sec=0.2)
             self.clear_local_client.wait_for_service(timeout_sec=0.2)
             self.clear_global_client.wait_for_service(timeout_sec=0.2)
         return False
@@ -391,10 +529,10 @@ class CooperativeMissionManager(Node):
         self.get_logger().info(message)
         return True, message
 
-    def _plan_uav_energy_sequence(self, targets):
+    def _plan_uav_energy_sequence(self, targets, ugv_leg_distances=None):
         responses = []
         sorties = []
-        for target in targets:
+        for index, target in enumerate(targets):
             response, message = self._request_uav_energy(target)
             if response is None:
                 return False, message
@@ -406,8 +544,21 @@ class CooperativeMissionManager(Node):
                 mission_energy_wh=float(
                     response.estimated_mission_energy_wh
                 ),
+                ugv_distance_m=(
+                    None
+                    if ugv_leg_distances is None
+                    else float(ugv_leg_distances[index])
+                ),
             ))
         first = responses[0]
+        _, charging_energy = self._ugv_energy_snapshot()
+        if charging_energy is None:
+            return False, "UGV charging battery state is unavailable"
+        charging_available = max(
+            0.0,
+            charging_energy
+            - self.ugv_energy_parameters.charging_reserve_wh,
+        )
         plan = plan_cooperative_energy(
             initial_energy_wh=float(first.current_energy_wh),
             battery_capacity_wh=float(first.battery_capacity_wh),
@@ -419,11 +570,49 @@ class CooperativeMissionManager(Node):
             initial_x=self.config.ugv_home.x,
             initial_y=self.config.ugv_home.y,
             sorties=sorties,
+            charger_available_energy_wh=charging_available,
+            charger_transfer_efficiency=(
+                self.ugv_energy_parameters.charger_transfer_efficiency
+            ),
         )
         self.energy_plan_pub.publish(String(data=plan.message))
         log = self.get_logger().info if plan.feasible else self.get_logger().error
         log(plan.message)
         return plan.feasible, plan.message
+
+    def _check_ugv_energy_plan(
+        self,
+        targets,
+        route_plan,
+        ugv_leg_distances,
+        return_home: bool,
+    ):
+        drive_energy, _ = self._ugv_energy_snapshot()
+        if drive_energy is None:
+            return False, "UGV drive battery state is unavailable"
+        return_distance = (
+            max(0.0, float(route_plan.total_cost) - sum(ugv_leg_distances))
+            if return_home
+            else 0.0
+        )
+        estimate = estimate_ugv_drive_energy(
+            self.ugv_energy_parameters,
+            available_energy_wh=drive_energy,
+            leg_distances_m=ugv_leg_distances,
+            payload_masses_kg=[target.payload_mass_kg for target in targets],
+            return_distance_m=return_distance,
+        )
+        decision = "PASS" if estimate.feasible else "REJECT"
+        message = (
+            f"UGV drive energy {decision}: available {drive_energy:.2f} Wh, "
+            f"predicted {estimate.predicted_energy_wh:.2f} Wh, reserve "
+            f"{estimate.reserve_energy_wh:.2f} Wh, required "
+            f"{estimate.required_energy_wh:.2f} Wh; cargo and docked UAV "
+            "mass included"
+        )
+        log = self.get_logger().info if estimate.feasible else self.get_logger().error
+        log(message)
+        return estimate.feasible, message
 
     @staticmethod
     def _pose(waypoint: GroundWaypoint, stamp) -> PoseStamped:
@@ -497,6 +686,10 @@ class CooperativeMissionManager(Node):
             float(self.config.settings["navigation_progress_distance"]),
             float(self.config.settings["navigation_progress_angle"]),
         )
+        arrival_tracker = NavigationArrivalTracker(
+            float(self.config.settings["ugv_arrival_position_tolerance"]),
+            float(self.config.settings["ugv_arrival_confirmation_duration"]),
+        )
         last_progress_log_at = time.monotonic()
         minimum_timeout = float(
             self.config.settings["navigation_timeout_min"]
@@ -514,6 +707,19 @@ class CooperativeMissionManager(Node):
             if goal_handle.is_cancel_requested:
                 self._cancel_navigation_goal(nested_goal)
                 return False, "Cooperative mission canceled"
+            if self.energy_constraints_enabled:
+                drive_energy, _ = self._ugv_energy_snapshot()
+                if (
+                    drive_energy is not None
+                    and drive_energy
+                    <= self.ugv_energy_parameters.drive_reserve_wh
+                ):
+                    self._cancel_navigation_goal(nested_goal)
+                    return False, (
+                        "UGV drive battery reached its safety reserve "
+                        f"({drive_energy:.2f} Wh <= "
+                        f"{self.ugv_energy_parameters.drive_reserve_wh:.2f} Wh)"
+                    )
             observed_route_distance = max(
                 observed_route_distance,
                 self.nav_distance,
@@ -536,6 +742,26 @@ class CooperativeMissionManager(Node):
                     self._yaw_from_odometry(physical_odom),
                 ):
                     progressed = True
+                position_error = math.hypot(
+                    position.x - waypoint.x,
+                    position.y - waypoint.y,
+                )
+                if arrival_tracker.update(
+                    position_error,
+                    clock_now.nanoseconds / 1.0e9,
+                ):
+                    self.get_logger().info(
+                        "UGV physical arrival confirmed at "
+                        f"'{waypoint.name}' (position error "
+                        f"{position_error:.2f}m); canceling Nav2 before "
+                        "the UAV handoff"
+                    )
+                    self.nav_distance = 0.0
+                    self._cancel_navigation_goal(nested_goal)
+                    return True, (
+                        f"UGV reached {waypoint.name} by physical "
+                        "position confirmation"
+                    )
 
             if progressed:
                 last_progress_at = clock_now
@@ -731,18 +957,32 @@ class CooperativeMissionManager(Node):
         result.completed_targets = 0
         self.last_feedback_at = 0.0
         try:
-            targets, route_plan = self._resolve_request_targets(
-                goal_handle.request
+            targets = self._resolve_request_targets(goal_handle.request)
+            remaining_ugv_cargo = sum(
+                target.payload_mass_kg for target in targets
+            )
+            self._publish_ugv_cargo_mass(remaining_ugv_cargo)
+            self._set_phase(CooperativePhase.PREPARING)
+            self._publish_feedback(goal_handle)
+            if not self._wait_interfaces():
+                return self._finish_failure(
+                    goal_handle, result, "Cooperative interfaces are unavailable"
+                )
+            self._set_phase(CooperativePhase.OPTIMIZING_ROUTE)
+            self.last_feedback_at = 0.0
+            self._publish_feedback(goal_handle)
+            targets, route_plan, ugv_leg_distances, route_source = (
+                self._optimize_targets_by_road(
+                    targets,
+                    bool(goal_handle.request.return_home),
+                )
             )
             self._publish_optimized_route(
                 targets,
                 route_plan,
                 bool(goal_handle.request.return_home),
+                route_source,
             )
-            if not self._wait_interfaces():
-                return self._finish_failure(
-                    goal_handle, result, "Cooperative interfaces are unavailable"
-                )
 
             self._set_phase(CooperativePhase.PREPARING)
             _, uav_state, _ = self._snapshot()
@@ -763,17 +1003,39 @@ class CooperativeMissionManager(Node):
                     goal_handle, result, "Failed to clear costmaps after docking"
                 )
 
-            # Predict the complete sequence before the UGV starts. The plan
-            # subtracts every payload-specific sortie and conservatively adds
-            # only the minimum charging available during UGV transit.
-            success, message = self._plan_uav_energy_sequence(targets)
-            if not success:
-                return self._finish_failure(
-                    goal_handle,
-                    result,
-                    "Cooperative mission rejected by UAV battery plan: "
-                    + message,
+            if self.energy_constraints_enabled:
+                success, message = self._check_ugv_energy_plan(
+                    targets,
+                    route_plan,
+                    ugv_leg_distances,
+                    bool(goal_handle.request.return_home),
                 )
+                if not success:
+                    return self._finish_failure(
+                        goal_handle,
+                        result,
+                        "Cooperative mission rejected by UGV drive battery "
+                        "plan: " + message,
+                    )
+
+                # Predict every UAV sortie before the UGV starts. Charging is
+                # limited by both transit time and the separate UGV charging
+                # pack above its configured reserve.
+                success, message = self._plan_uav_energy_sequence(
+                    targets,
+                    ugv_leg_distances,
+                )
+                if not success:
+                    return self._finish_failure(
+                        goal_handle,
+                        result,
+                        "Cooperative mission rejected by UAV battery plan: "
+                        + message,
+                    )
+            else:
+                self.energy_plan_pub.publish(String(
+                    data="DISABLED for this simulation stage"
+                ))
 
             current_ugv_stop = self.config.ugv_home.name
             for index, target in enumerate(targets):
@@ -803,15 +1065,17 @@ class CooperativeMissionManager(Node):
                         goal_handle, result, "UGV did not settle before UAV release"
                     )
 
-                # Charging continues during UGV transit. Re-evaluate with the
-                # latest state of charge immediately before physical release.
-                success, message = self._check_uav_energy(target)
-                if not success:
-                    return self._finish_failure(
-                        goal_handle,
-                        result,
-                        "UAV takeoff rejected by battery preflight: " + message,
-                    )
+                if self.energy_constraints_enabled:
+                    # Charging continues during UGV transit. Re-evaluate with
+                    # the latest state of charge before physical release.
+                    success, message = self._check_uav_energy(target)
+                    if not success:
+                        return self._finish_failure(
+                            goal_handle,
+                            result,
+                            "UAV takeoff rejected by battery preflight: "
+                            + message,
+                        )
 
                 self._set_phase(
                     CooperativePhase.UAV_DETACHING, target.name, "UAV"
@@ -828,6 +1092,11 @@ class CooperativeMissionManager(Node):
                     return self._finish_failure(
                         goal_handle, result, f"UAV detach failed: {message}"
                     )
+                remaining_ugv_cargo = max(
+                    0.0,
+                    remaining_ugv_cargo - target.payload_mass_kg,
+                )
+                self._publish_ugv_cargo_mass(remaining_ugv_cargo)
 
                 self._set_phase(
                     CooperativePhase.UAV_DELIVERING, target.name, "UAV"
@@ -882,6 +1151,7 @@ class CooperativeMissionManager(Node):
                 return self._finish_canceled(goal_handle, result)
 
             self._set_phase(CooperativePhase.COMPLETED)
+            self._publish_ugv_cargo_mass(0.0)
             result.success = True
             result.message = "Cooperative UGV-UAV delivery completed"
             goal_handle.succeed()

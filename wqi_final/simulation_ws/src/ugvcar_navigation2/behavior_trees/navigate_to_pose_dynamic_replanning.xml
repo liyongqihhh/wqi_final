@@ -1,0 +1,63 @@
+<!--
+  Dynamic-obstacle navigation checks path validity at 1 Hz and computes a new
+  route when a prediction blocks the path or once whenever the active threat
+  count changes. The edge-triggered condition avoids retaining a long detour
+  without replacing the controller path every cycle.
+  Recovery never commands a scripted spin or reverse.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="8" name="DynamicNavigateRecovery">
+      <PipelineSequence>
+        <RateController hz="1.0" name="DynamicPathReplanner">
+          <Fallback name="ComputeWhenDynamicPathChanges">
+            <ReactiveSequence name="KeepValidDynamicPath">
+              <Inverter>
+                <GlobalUpdatedGoal/>
+              </Inverter>
+              <IsPathValid path="{path}"/>
+              <Inverter>
+                <DynamicObstacleChanged status_topic="/ugv/dynamic_replanning/status"/>
+              </Inverter>
+            </ReactiveSequence>
+            <Sequence name="ComputeAndSmoothDynamicPath">
+              <ComputePathToPose goal="{goal}" path="{raw_path}" planner_id="GridBased"/>
+              <Fallback name="SmoothOrUseRawDynamicPath">
+                <SmoothPath unsmoothed_path="{raw_path}" smoothed_path="{path}" smoother_id="simple_smoother" max_smoothing_duration="0.2" check_for_collisions="true"/>
+                <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+              </Fallback>
+            </Sequence>
+            <!-- Dynamic occupancy can temporarily cover the exact goal. Keep
+                 the previous controller path alive while D* Lite retries;
+                 Predictive DWA and the measured local scan remain active. -->
+            <AlwaysSuccess/>
+          </Fallback>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="RecoveryFollowDynamicPath">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <Sequence name="RefreshAndReplan">
+            <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Controller" service_name="global_costmap/clear_entirely_global_costmap"/>
+            <Wait name="WaitForFreshScans" wait_duration="0.5"/>
+            <ComputePathToPose goal="{goal}" path="{raw_path}" planner_id="GridBased"/>
+            <Fallback name="RecoverySmoothOrUseRawDynamicPath">
+              <SmoothPath unsmoothed_path="{raw_path}" smoothed_path="{path}" smoother_id="simple_smoother" max_smoothing_duration="0.2" check_for_collisions="true"/>
+              <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            </Fallback>
+          </Sequence>
+        </RecoveryNode>
+      </PipelineSequence>
+      <ReactiveFallback name="DynamicRecoveries">
+        <GoalUpdated/>
+        <RoundRobin name="SensorRefreshRecoveries">
+          <Sequence name="ClearDynamicLayers">
+            <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+            <Wait name="WaitForDynamicLayerUpdate" wait_duration="1.0"/>
+          </Sequence>
+          <Wait name="WaitForMovingObstacle" wait_duration="2.0"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

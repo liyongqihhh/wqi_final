@@ -1,12 +1,17 @@
 import math
 
+import pytest
+
 from uav_control.safety_geometry import (
+    StableObstacleVectorFilter,
     distance_from_safety_center,
     is_diagonal_ground_return,
     is_ground_return,
     minimum_valid_scan_range,
     minimum_obstacle_distance,
     minimum_obstacle_distances,
+    nearest_obstacle_vector,
+    obstacle_surface_vector,
 )
 
 
@@ -128,3 +133,75 @@ def test_scan_range_selects_nearest_valid_ray():
         minimum_range=0.05,
         maximum_range=4.0,
     ) == 1.25
+
+
+def test_nearest_obstacle_vector_filters_ground_and_self_returns():
+    minimum, vector = nearest_obstacle_vector(
+        [
+            (0.8, 0.0, -0.45),
+            (0.2, 0.0, -0.27),
+            (0.9, -0.3, -0.27),
+        ],
+        lidar_height=0.45,
+        center_height=0.18,
+        ground_clearance=0.09,
+        lidar_to_down_sensor=0.36,
+        ground_tolerance=0.02,
+        self_filter_radius=0.58,
+    )
+    assert math.isclose(minimum, math.hypot(0.9, 0.3))
+    assert vector == (0.9, -0.3, 0.0)
+
+
+def test_obstacle_surface_vector_uses_one_local_surface_patch():
+    minimum, vector = obstacle_surface_vector(
+        [
+            (2.00, -0.10, -0.27),
+            (2.05, 0.00, -0.27),
+            (2.10, 0.10, -0.27),
+            (1.95, 0.80, -0.27),
+        ],
+        lidar_height=0.45,
+        center_height=0.18,
+        ground_clearance=math.inf,
+        lidar_to_down_sensor=0.36,
+        ground_tolerance=0.02,
+        self_filter_radius=0.58,
+        surface_depth=0.35,
+        patch_radius=0.75,
+    )
+    assert minimum == pytest.approx(math.hypot(2.0, 0.1))
+    assert vector == pytest.approx((2.05, 0.0, 0.0))
+
+
+def test_stable_vector_filter_rejects_single_frame_target_jump():
+    tracker = StableObstacleVectorFilter(
+        alpha=0.5,
+        association_distance=0.5,
+        switch_confirmations=2,
+        maximum_hold_updates=2,
+    )
+    assert tracker.update((2.0, 0.0, 0.0)) is None
+    assert tracker.update((2.1, 0.0, 0.0)) == pytest.approx(
+        (2.05, 0.0, 0.0)
+    )
+    assert tracker.update((0.0, 3.0, 0.0)) == pytest.approx(
+        (2.05, 0.0, 0.0)
+    )
+    assert tracker.update((2.0, 0.1, 0.0)) == pytest.approx(
+        (2.025, 0.05, 0.0)
+    )
+
+
+def test_stable_vector_filter_switches_after_repeated_observations():
+    tracker = StableObstacleVectorFilter(
+        alpha=0.5,
+        association_distance=0.5,
+        switch_confirmations=2,
+        maximum_hold_updates=2,
+    )
+    tracker.update((2.0, 0.0, 0.0))
+    tracker.update((2.0, 0.0, 0.0))
+    tracker.update((0.0, 3.0, 0.0))
+    switched = tracker.update((0.1, 3.0, 0.0))
+    assert switched == pytest.approx((0.05, 3.0, 0.0))

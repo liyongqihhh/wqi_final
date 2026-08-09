@@ -234,3 +234,22 @@ def test_route_distance_uses_the_air_corridor_graph_and_is_symmetric():
     )
     assert outbound == pytest.approx(inbound)
     assert outbound >= direct
+
+
+def test_dijkstra_can_replan_around_a_blocked_corridor_edge():
+    waypoints = WaypointMap(CONFIG)
+    normal = [
+        node.name
+        for node in waypoints.plan_route("south_junction", "dormitory")
+    ]
+    rerouted = [
+        node.name
+        for node in waypoints.plan_route(
+            "south_junction",
+            "dormitory",
+            blocked_edges={("trunk_2", "trunk_3")},
+        )
+    ]
+    assert "trunk_3" in normal
+    assert rerouted != normal
+    assert rerouted[-1] == "dormitory"

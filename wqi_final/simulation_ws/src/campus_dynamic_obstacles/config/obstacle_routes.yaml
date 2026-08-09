@@ -1,0 +1,99 @@
+densities:
+  none: {ground: 0, air: 0}
+  low: {ground: 3, air: 0}
+  medium: {ground: 5, air: 1}
+  high: {ground: 8, air: 2}
+
+# Fixed traffic routes must not pass through a permanent delivery bay. The
+# obstacle actors remain non-reactive; these points document the clearance
+# contract checked by the package tests.
+protected_stops:
+  logistics_center: [0.0, -43.5]
+  cafeteria: [38.0, -20.0]
+  teaching_building: [-40.0, 9.5]
+  innovation_center: [-20.0, 40.5]
+  library: [62.0, 40.5]
+  laboratory: [62.0, 19.5]
+  gymnasium: [14.0, 39.5]
+  dormitory_center: [30.0, 11.0]
+
+routes:
+  logistics_road:
+    layer: ground
+    speed_mps: 0.45
+    radius_m: 0.45
+    height_m: 1.60
+    waypoints: [[0.0, -38.0, 0.8], [0.0, -22.0, 0.8]]
+  south_crossing:
+    layer: ground
+    speed_mps: 0.50
+    radius_m: 0.45
+    height_m: 1.60
+    waypoints: [[-6.0, -18.0, 0.8], [20.0, -18.0, 0.8]]
+  trunk_crossing:
+    layer: ground
+    speed_mps: 0.45
+    radius_m: 0.45
+    height_m: 1.60
+    waypoints: [[8.0, -14.5, 0.8], [30.0, -10.0, 0.8]]
+  cafeteria_lane:
+    layer: ground
+    speed_mps: 0.40
+    radius_m: 0.45
+    height_m: 1.60
+    waypoints: [[25.0, -20.0, 0.8], [34.0, -20.0, 0.8], [35.0, -18.5, 0.8], [41.0, -18.5, 0.8], [42.0, -20.0, 0.8], [48.0, -20.0, 0.8]]
+  dormitory_lane:
+    layer: ground
+    speed_mps: 0.40
+    radius_m: 0.45
+    height_m: 1.60
+    waypoints: [[8.0, 11.0, 0.8], [26.0, 11.0, 0.8], [27.0, 12.5, 0.8], [33.0, 12.5, 0.8], [34.0, 11.0, 0.8], [52.0, 11.0, 0.8]]
+  east_vertical:
+    layer: ground
+    speed_mps: 0.45
+    radius_m: 0.45
+    height_m: 1.60
+    waypoints: [[54.0, -6.0, 0.8], [54.0, 16.0, 0.8]]
+  library_east:
+    layer: ground
+    speed_mps: 0.42
+    radius_m: 0.45
+    height_m: 1.60
+    waypoints: [[78.0, 17.0, 0.8], [78.0, 46.0, 0.8]]
+  north_lane:
+    layer: ground
+    speed_mps: 0.48
+    radius_m: 0.45
+    height_m: 1.60
+    waypoints: [[-30.0, 40.0, 0.8], [-24.0, 40.2, 0.8], [-23.0, 39.0, 0.8], [-17.0, 39.0, 0.8], [-16.0, 40.0, 0.8], [-8.0, 42.0, 0.8], [0.0, 36.0, 0.8], [10.0, 38.5, 0.8], [11.0, 38.0, 0.8], [17.0, 38.0, 0.8], [18.0, 38.7, 0.8], [24.0, 39.0, 0.8]]
+  west_lane:
+    layer: ground
+    speed_mps: 0.42
+    radius_m: 0.45
+    height_m: 1.60
+    waypoints: [[-56.0, 9.5, 0.8], [-44.0, 9.5, 0.8], [-43.0, 8.0, 0.8], [-37.0, 8.0, 0.8], [-36.0, 9.3, 0.8], [-30.0, 9.0, 0.8]]
+  north_east_lane:
+    layer: ground
+    speed_mps: 0.45
+    radius_m: 0.45
+    height_m: 1.60
+    waypoints: [[42.0, 65.0, 0.8], [75.0, 65.0, 0.8]]
+
+  air_east_corridor:
+    layer: air
+    speed_mps: 0.70
+    radius_m: 0.70
+    height_m: 1.40
+    waypoints: [[78.0, 20.0, 15.0], [78.0, 38.0, 15.0]]
+  air_teaching_corridor:
+    layer: air
+    speed_mps: 0.65
+    radius_m: 0.70
+    height_m: 1.40
+    waypoints: [[-55.0, 9.5, 15.0], [-42.0, 9.5, 15.0]]
+  air_logistics_corridor:
+    layer: air
+    speed_mps: 0.65
+    radius_m: 0.70
+    height_m: 1.40
+    waypoints: [[0.0, -37.0, 15.0], [0.0, -24.0, 15.0]]

@@ -7,12 +7,19 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     initial_battery_percentage = LaunchConfiguration(
         "initial_battery_percentage"
+    )
+    enable_energy_constraints = LaunchConfiguration(
+        "enable_energy_constraints"
+    )
+    external_charger_control = LaunchConfiguration(
+        "external_charger_control"
     )
     control_launch = os.path.join(
         get_package_share_directory("uav_control"),
@@ -30,11 +37,19 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "initial_battery_percentage", default_value="0.80"
         ),
+        DeclareLaunchArgument(
+            "enable_energy_constraints", default_value="true"
+        ),
+        DeclareLaunchArgument(
+            "external_charger_control", default_value="false"
+        ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(control_launch),
             launch_arguments={
                 "use_sim_time": use_sim_time,
                 "initial_battery_percentage": initial_battery_percentage,
+                "enable_energy_constraints": enable_energy_constraints,
+                "external_charger_control": external_charger_control,
             }.items(),
         ),
         IncludeLaunchDescription(
@@ -47,6 +62,11 @@ def generate_launch_description():
             namespace="uav",
             name="delivery_mission_manager",
             output="screen",
-            parameters=[{"use_sim_time": use_sim_time}],
+            parameters=[{
+                "use_sim_time": use_sim_time,
+                "energy_constraints_enabled": ParameterValue(
+                    enable_energy_constraints, value_type=bool
+                ),
+            }],
         ),
     ])

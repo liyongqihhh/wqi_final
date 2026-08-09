@@ -14,7 +14,7 @@ from simulation_ui.config import (
 )
 
 
-def test_all_five_modes_have_launch_commands():
+def test_all_six_modes_have_launch_commands():
     builder = CommandBuilder()
     for mode in SIMULATION_MODES:
         commands = builder.simulation_commands(
@@ -46,6 +46,37 @@ def test_energy_mode_uses_selected_battery_but_stage_four_uses_full_charge():
     )[0].command
     assert "initial_battery_percentage:=1.00" in stage_four
     assert "initial_battery_percentage:=0.30" in stage_five
+    assert "enable_energy_constraints:=false" in stage_four
+    assert "enable_energy_constraints:=true" in stage_five
+
+
+def test_stage_six_enables_selected_dynamic_obstacle_density_and_three_batteries():
+    command = CommandBuilder().simulation_commands(
+        "cooperative_dynamic_energy",
+        ViewerMode.GAZEBO,
+        75,
+        False,
+        ugv_drive_battery_percent=65,
+        ugv_charging_battery_percent=55,
+        obstacle_density="high",
+    )[0].command
+    assert "initial_battery_percentage:=0.75" in command
+    assert "initial_ugv_drive_battery_percentage:=0.65" in command
+    assert "initial_ugv_charging_battery_percentage:=0.55" in command
+    assert "enable_dynamic_obstacles:=true" in command
+    assert "obstacle_density:=high" in command
+
+
+def test_stage_five_forces_dynamic_obstacles_off():
+    command = CommandBuilder().simulation_commands(
+        "cooperative_energy",
+        ViewerMode.RVIZ,
+        80,
+        False,
+        obstacle_density="high",
+    )[0].command
+    assert "enable_dynamic_obstacles:=false" in command
+    assert "obstacle_density:=none" in command
 
 
 def test_low_battery_notice_explains_energy_admission_risk():
@@ -54,6 +85,19 @@ def test_low_battery_notice_explains_energy_admission_risk():
     assert notice.requires_confirmation
     assert "18%" in notice.message
     assert "安全储备" in notice.message
+
+
+def test_low_ugv_drive_or_charging_pack_is_reported():
+    drive = battery_admission_notice(
+        "cooperative_energy", 80, 15, 80
+    )
+    charger = battery_admission_notice(
+        "cooperative_energy", 80, 80, 8
+    )
+    assert drive.severity == "critical"
+    assert "UGV 驱动电池 15%" in drive.message
+    assert charger.severity == "critical"
+    assert "UGV 充电电池 8%" in charger.message
 
 
 def test_normal_battery_does_not_require_confirmation():
@@ -95,6 +139,7 @@ def test_cooperative_goal_uses_cooperative_action():
     assert task is not None
     assert "/cooperative_delivery/execute_mission" in task.command
     assert "ExecuteCooperativeDelivery" in task.command
+    assert task.command.startswith("env PYTHONUNBUFFERED=1 ros2 action")
 
 
 def test_multi_item_goal_keeps_targets_floors_and_payloads_aligned():

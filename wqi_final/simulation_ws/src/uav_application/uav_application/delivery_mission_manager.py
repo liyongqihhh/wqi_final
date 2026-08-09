@@ -14,7 +14,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import BatteryState
-from std_msgs.msg import Bool, Float32, Float64, Int8, String
+from std_msgs.msg import Bool, Float32, Float64, Int8, Int32, String
 from std_srvs.srv import Trigger
 from uav_control.battery_model import BatteryModel, BatteryParameters
 from uav_interfaces.action import ExecuteDelivery, FlyToPose
@@ -28,6 +28,7 @@ from uav_navigation.route_optimizer import RoutePlan, optimize_visit_order
 
 from uav_application.mission_states import (
     MissionPhase,
+    is_same_delivery_pad,
     is_settled_at_altitude,
     uses_local_delivery_profile,
 )
@@ -65,6 +66,10 @@ class DeliveryMissionManager(Node):
         )
         self.declare_parameter("battery_config", default_battery_file)
         self.declare_parameter("battery_state_timeout", 3.0)
+        self.declare_parameter("energy_constraints_enabled", True)
+        self.energy_constraints_enabled = bool(
+            self.get_parameter("energy_constraints_enabled").value
+        )
         self.waypoint_map = WaypointMap(
             str(self.get_parameter("waypoint_file").value)
         )
@@ -85,6 +90,9 @@ class DeliveryMissionManager(Node):
         self.current_target = ""
         self.battery_state = None
         self.battery_received_at_ns = 0
+        self.replan_count = 0
+        self.recovery_home = None
+        self.recovery_landing_height = 0.0
 
         self.fly_client = ActionClient(
             self,
@@ -134,6 +142,15 @@ class DeliveryMissionManager(Node):
         self.planned_path_pub = self.create_publisher(
             Path, "planned_path", transient_qos
         )
+        self.replanned_path_pub = self.create_publisher(
+            Path, "replanned_path", transient_qos
+        )
+        self.blocked_edge_pub = self.create_publisher(
+            String, "blocked_edge", transient_qos
+        )
+        self.replan_count_pub = self.create_publisher(
+            Int32, "replan_count", transient_qos
+        )
         self.landing_height_pub = self.create_publisher(
             Float64, "landing_height", 10
         )
@@ -166,8 +183,16 @@ class DeliveryMissionManager(Node):
         )
         self._set_phase(MissionPhase.IDLE)
         self._publish_payload_mass(0.0)
-        self.can_execute_pub.publish(Bool(data=False))
-        self.get_logger().info("UAV delivery mission manager is ready")
+        self.can_execute_pub.publish(
+            Bool(data=not self.energy_constraints_enabled)
+        )
+        energy_state = (
+            "enabled" if self.energy_constraints_enabled else "disabled"
+        )
+        self.get_logger().info(
+            f"UAV delivery mission manager is ready; energy constraints "
+            f"{energy_state}"
+        )
 
     def _odom_callback(self, message: Odometry) -> None:
         with self.lock:
@@ -208,6 +233,12 @@ class DeliveryMissionManager(Node):
         if not math.isfinite(landing_height) or not 0.0 <= landing_height <= 2.0:
             self.get_logger().error("Landing height must be between 0 and 2 metres")
             return GoalResponse.REJECT
+        if not self.energy_constraints_enabled:
+            message = "Energy constraints disabled for this simulation stage"
+            self.energy_preflight_pub.publish(String(data=message))
+            self.can_execute_pub.publish(Bool(data=True))
+            self.get_logger().info(message)
+            return GoalResponse.ACCEPT
         assessment, message = self._assess_delivery_energy(
             mission.target_names,
             goal_request.return_home,
@@ -411,6 +442,24 @@ class DeliveryMissionManager(Node):
             landing_height = float(request.landing_height)
             if not math.isfinite(landing_height) or not 0.0 <= landing_height <= 2.0:
                 raise ValueError("Landing height must be between 0 and 2 metres")
+            if not self.energy_constraints_enabled:
+                message = "Energy constraints disabled for this simulation stage"
+                response.feasible = True
+                response.message = message
+                response.current_soc = 1.0
+                response.current_energy_wh = float(
+                    self.battery_parameters.capacity_wh
+                )
+                response.battery_capacity_wh = float(
+                    self.battery_parameters.capacity_wh
+                )
+                response.estimated_final_soc = 1.0
+                response.net_charge_power_w = float(
+                    self.battery_parameters.net_charge_power_w
+                )
+                self.energy_preflight_pub.publish(String(data=message))
+                self.can_execute_pub.publish(Bool(data=True))
+                return response
             assessment, message = self._assess_delivery_energy(
                 mission.target_names,
                 request.return_home,
@@ -577,13 +626,19 @@ class DeliveryMissionManager(Node):
         altitude,
         goal_handle,
         allow_platform_proximity=False,
+        timeout_override=None,
+        honor_mission_cancel=True,
     ):
         settings = self.waypoint_map.flight
         goal = FlyToPose.Goal()
         goal.target = self._pose(waypoint, altitude)
         goal.target.header.stamp = self.get_clock().now().to_msg()
         goal.position_tolerance = float(settings["position_tolerance"])
-        goal.timeout = float(settings["segment_timeout"])
+        goal.timeout = float(
+            timeout_override
+            if timeout_override is not None
+            else settings["segment_timeout"]
+        )
         goal.allow_platform_proximity = bool(allow_platform_proximity)
 
         send_future = self.fly_client.send_goal_async(
@@ -597,8 +652,10 @@ class DeliveryMissionManager(Node):
         self.active_fly_goal = nested_goal
         result_future = nested_goal.get_result_async()
         while rclpy.ok() and not result_future.done():
-            if goal_handle.is_cancel_requested:
-                nested_goal.cancel_goal_async()
+            if honor_mission_cancel and goal_handle.is_cancel_requested:
+                cancel_future = nested_goal.cancel_goal_async()
+                self._wait_future(cancel_future, 3.0)
+                self.active_fly_goal = None
                 return False, "Delivery mission canceled"
             self._publish_feedback(goal_handle)
             time.sleep(0.1)
@@ -608,23 +665,105 @@ class DeliveryMissionManager(Node):
         result = result_future.result().result
         return bool(result.success), str(result.message)
 
+    @staticmethod
+    def _is_obstacle_failure(message: str) -> bool:
+        text = str(message).lower()
+        return "obstacle did not clear" in text or "blocked:" in text
+
+    def _publish_path(self, points, publisher=None) -> None:
+        path = Path()
+        path.header.frame_id = "map"
+        path.header.stamp = self.get_clock().now().to_msg()
+        for waypoint, altitude in points:
+            pose = self._pose(waypoint, altitude)
+            pose.header.stamp = path.header.stamp
+            path.poses.append(pose)
+        (publisher or self.planned_path_pub).publish(path)
+
+    def _record_replan(self, reason: str) -> None:
+        self.replan_count += 1
+        self.replan_count_pub.publish(Int32(data=self.replan_count))
+        self.blocked_edge_pub.publish(String(data=str(reason)))
+        self.get_logger().warning(
+            f"UAV replanning event {self.replan_count}: {reason}"
+        )
+
+    def _fly_with_local_replan(
+        self,
+        waypoint,
+        altitude,
+        goal_handle,
+        allow_platform_proximity=False,
+    ):
+        # The flight controller follows a continuously replanned 3D path from
+        # live lidar data. The mission layer must not inject scripted
+        # left/right/up/down escape motions.
+        return self._fly_to(
+            waypoint,
+            altitude,
+            goal_handle,
+            allow_platform_proximity=allow_platform_proximity,
+        )
+
     def _fly_route(self, start, destination, altitude, goal_handle):
-        route = self.waypoint_map.plan_route(start, destination)
-        planned_path = Path()
-        planned_path.header.frame_id = "map"
-        planned_path.header.stamp = self.get_clock().now().to_msg()
-        route_nodes = [self.waypoint_map.corridor_nodes[start], *route]
-        for node in route_nodes:
-            pose = self._pose(node, altitude)
-            pose.header.stamp = planned_path.header.stamp
-            planned_path.poses.append(pose)
-        self.planned_path_pub.publish(planned_path)
-        route_names = " -> ".join([start, *(node.name for node in route)])
-        self.get_logger().info(f"UAV air corridor route: {route_names}")
-        for node in route:
+        current = str(start)
+        blocked_edges = set()
+        maximum = int(
+            self.waypoint_map.flight.get("maximum_route_replans", 3)
+        )
+        route_replans = 0
+        while current != destination:
+            route = self.waypoint_map.plan_route(
+                current, destination, blocked_edges=blocked_edges
+            )
+            if not route:
+                break
+            current_node = self.waypoint_map.corridor_nodes[current]
+            self._publish_path(
+                tuple(
+                    (node, altitude)
+                    for node in (current_node, *route)
+                )
+            )
+            route_names = " -> ".join(
+                [current, *(node.name for node in route)]
+            )
+            self.get_logger().info(f"UAV air corridor route: {route_names}")
+            node = route[0]
             success, message = self._fly_to(node, altitude, goal_handle)
-            if not success:
+            if success:
+                current = node.name
+                continue
+            if not self._is_obstacle_failure(message):
                 return False, f"segment to '{node.name}' failed: {message}"
+            edge = self.waypoint_map.normalized_edge(current, node.name)
+            if route_replans >= maximum:
+                return self._fly_with_local_replan(
+                    node, altitude, goal_handle
+                )
+            blocked_edges.add(edge)
+            route_replans += 1
+            self._record_replan(f"EDGE:{edge[0]}<->{edge[1]}")
+            returned, return_message = self._fly_to(
+                current_node, altitude, goal_handle
+            )
+            if not returned:
+                return False, (
+                    f"Could not return to corridor node '{current}' after "
+                    f"blockage: {return_message}"
+                )
+            try:
+                self.waypoint_map.plan_route(
+                    current, destination, blocked_edges=blocked_edges
+                )
+            except WaypointConfigurationError:
+                blocked_edges.remove(edge)
+                local_success, local_message = self._fly_with_local_replan(
+                    node, altitude, goal_handle
+                )
+                if not local_success:
+                    return False, local_message
+                current = node.name
         return True, "Air corridor route completed"
 
     def _publish_direct_path(
@@ -634,34 +773,119 @@ class DeliveryMissionManager(Node):
         start_altitude: float,
         destination_altitude: float,
     ) -> None:
-        planned_path = Path()
-        planned_path.header.frame_id = "map"
-        planned_path.header.stamp = self.get_clock().now().to_msg()
-        for waypoint, altitude in (
+        self._publish_path((
             (start, start_altitude),
             (destination, destination_altitude),
-        ):
-            pose = self._pose(waypoint, altitude)
-            pose.header.stamp = planned_path.header.stamp
-            planned_path.poses.append(pose)
-        self.planned_path_pub.publish(planned_path)
+        ))
         self.get_logger().info(
             "UAV local direct route: "
             f"{start.name} ({start_altitude:.2f} m) -> "
             f"{destination.name} ({destination_altitude:.2f} m)"
         )
 
+    def _recover_after_failure(self, goal_handle) -> str:
+        home = self.recovery_home
+        landing_height = float(self.recovery_landing_height)
+        odom, vehicle_state, _ = self._snapshot()
+        altitude = (
+            float(odom.pose.pose.position.z) if odom is not None else 0.0
+        )
+        airborne = (
+            vehicle_state != LANDED
+            if vehicle_state is not None
+            else altitude > landing_height + 0.25
+        )
+        airborne = airborne or altitude > landing_height + 0.35
+        if home is None or not airborne:
+            return "UAV was already on the ground"
+
+        self.get_logger().error(
+            "Mission failed while airborne; starting automatic return and landing"
+        )
+        if self.active_fly_goal is not None:
+            cancel_future = self.active_fly_goal.cancel_goal_async()
+            self._wait_future(cancel_future, 3.0)
+            self.active_fly_goal = None
+
+        settings = self.waypoint_map.flight
+        approach_altitude = max(
+            landing_height + 0.8,
+            float(settings["landing_approach_altitude"]),
+        )
+        horizontal_error = (
+            math.hypot(
+                float(odom.pose.pose.position.x) - float(home.x),
+                float(odom.pose.pose.position.y) - float(home.y),
+            )
+            if odom is not None
+            else float("inf")
+        )
+        recovery_notes = []
+        self._set_phase(MissionPhase.RETURNING, home.name)
+        if horizontal_error > 0.5:
+            return_altitude = max(approach_altitude, altitude)
+            returned, return_message = self._fly_to(
+                home,
+                return_altitude,
+                goal_handle,
+                allow_platform_proximity=True,
+                timeout_override=60.0,
+                honor_mission_cancel=False,
+            )
+            recovery_notes.append(f"return={return_message}")
+        else:
+            returned = True
+            recovery_notes.append("return=already above home")
+
+        if returned:
+            approached, approach_message = self._fly_to(
+                home,
+                approach_altitude,
+                goal_handle,
+                allow_platform_proximity=True,
+                timeout_override=45.0,
+                honor_mission_cancel=False,
+            )
+            recovery_notes.append(f"approach={approach_message}")
+        else:
+            approached = False
+            recovery_notes.append("approach=skipped after return failure")
+
+        self._set_phase(MissionPhase.LANDING, home.name)
+        land_accepted, land_message = self._call_trigger(
+            self.land_client, timeout=10.0
+        )
+        landed = land_accepted and self._wait_landed(
+            landing_height, timeout=45.0
+        )
+        recovery_notes.append(f"land={land_message}")
+        if landed:
+            self._publish_payload_mass(0.0)
+            recovery_notes.append("confirmed=landed")
+        else:
+            recovery_notes.append("confirmed=failed")
+            self.get_logger().error(
+                "Automatic landing recovery could not confirm ground contact"
+            )
+        if not approached:
+            recovery_notes.append("warning=landed at current safe position")
+        return ", ".join(recovery_notes)
+
     def _fail(self, goal_handle, result, message):
+        recovery_message = self._recover_after_failure(goal_handle)
         self._set_phase(MissionPhase.FAILED)
         result.success = False
-        result.message = message
+        result.message = f"{message}; recovery: {recovery_message}"
         goal_handle.abort()
-        self.get_logger().error(message)
+        self.get_logger().error(result.message)
+        self.recovery_home = None
         return result
 
     def _execute_delivery(self, goal_handle):
         result = ExecuteDelivery.Result()
         result.completed_targets = 0
+        self.replan_count = 0
+        self.recovery_home = None
         try:
             mission = self._resolve_optimized_delivery(
                 goal_handle.request.targets,
@@ -679,18 +903,23 @@ class DeliveryMissionManager(Node):
         if not self._wait_interfaces():
             return self._fail(goal_handle, result, "UAV control interfaces are unavailable")
 
-        assessment, preflight_message = self._assess_delivery_energy(
-            mission.target_names,
-            goal_handle.request.return_home,
-            goal_handle.request.home_name,
-            float(goal_handle.request.landing_height),
-            payload_masses,
-            mission.target_floors,
-        )
-        self.energy_preflight_pub.publish(String(data=preflight_message))
-        if assessment is None or not assessment.feasible:
-            return self._fail(goal_handle, result, preflight_message)
-        self.get_logger().info(preflight_message)
+        if self.energy_constraints_enabled:
+            assessment, preflight_message = self._assess_delivery_energy(
+                mission.target_names,
+                goal_handle.request.return_home,
+                goal_handle.request.home_name,
+                float(goal_handle.request.landing_height),
+                payload_masses,
+                mission.target_floors,
+            )
+            self.energy_preflight_pub.publish(String(data=preflight_message))
+            if assessment is None or not assessment.feasible:
+                return self._fail(goal_handle, result, preflight_message)
+            self.get_logger().info(preflight_message)
+        else:
+            self.energy_preflight_pub.publish(String(
+                data="Energy constraints disabled for this simulation stage"
+            ))
 
         settings = self.waypoint_map.flight
         local_delivery = uses_local_delivery_profile(
@@ -706,6 +935,8 @@ class DeliveryMissionManager(Node):
             else float(settings["takeoff_altitude"])
         )
         landing_height = float(goal_handle.request.landing_height)
+        self.recovery_home = home
+        self.recovery_landing_height = landing_height
         remaining_payload = sum(payload_masses)
         self._publish_payload_mass(remaining_payload)
         self._configure_landing_height(landing_height)
@@ -788,8 +1019,17 @@ class DeliveryMissionManager(Node):
                 f"Approaching {target.name} {floor_text} at "
                 f"({target.x:.2f}, {target.y:.2f}, {delivery_altitude:.2f})"
             )
-            success, message = self._fly_to(
-                target, delivery_altitude, goal_handle
+            platform_approach = local_delivery and is_same_delivery_pad(
+                home.x,
+                home.y,
+                target.x,
+                target.y,
+            )
+            success, message = self._fly_with_local_replan(
+                target,
+                delivery_altitude,
+                goal_handle,
+                allow_platform_proximity=platform_approach,
             )
             if not success:
                 return self._fail(goal_handle, result, f"Approach failed: {message}")
@@ -833,7 +1073,7 @@ class DeliveryMissionManager(Node):
                     return_altitude,
                     return_altitude,
                 )
-                success, message = self._fly_to(
+                success, message = self._fly_with_local_replan(
                     home,
                     return_altitude,
                     goal_handle,
@@ -873,6 +1113,7 @@ class DeliveryMissionManager(Node):
         result.success = True
         result.message = "UAV delivery mission completed"
         goal_handle.succeed()
+        self.recovery_home = None
         return result
 
 

@@ -513,8 +513,8 @@ def make_world(layout: dict, road_paths: dict[str, List[Point]]) -> str:
     return f"""<sdf version='1.7'>
   <world name='campus_delivery'>
     <physics name='default_physics' type='ode'>
-      <max_step_size>0.001</max_step_size>
-      <real_time_update_rate>1000</real_time_update_rate>
+      <max_step_size>0.002</max_step_size>
+      <real_time_update_rate>500</real_time_update_rate>
     </physics>
     <light name='sun' type='directional'>
       <pose>0 0 80 0 0 0</pose>
@@ -579,18 +579,159 @@ def write_pgm(image: Image.Image, path: Path) -> None:
     path.write_bytes(b"P5\n%d %d\n255\n" % image.size + image.tobytes())
 
 
+def make_keepout_mask(
+    layout: dict,
+    road_paths: dict[str, List[Point]],
+    origin: list[float],
+    resolution: float,
+    width_px: int,
+    height_px: int,
+    edge_margin: float,
+    outer_recovery_margin: float,
+    guidance_band_width: float,
+    minimum_drivable_width: float,
+    guidance_band_pixel: int,
+    soft_keepout_pixel: int,
+) -> Image.Image:
+    mask = Image.new("L", (width_px, height_px), 0)
+    draw = ImageDraw.Draw(mask)
+
+    # The complete paved network is a recoverable shoulder. Later passes
+    # replace its center with progressively lower navigation costs.
+    for road in layout["roads"]:
+        draw_line(
+            draw,
+            road_paths[road["name"]],
+            origin,
+            resolution,
+            height_px,
+            float(road["width"]) + 2.0 * outer_recovery_margin,
+            soft_keepout_pixel,
+        )
+    for area in layout.get("paved_areas", []):
+        draw.polygon(
+            rect_polygon(
+                area["center"],
+                [
+                    float(value) + 2.0 * outer_recovery_margin
+                    for value in area["size"]
+                ],
+                origin,
+                resolution,
+                height_px,
+            ),
+            fill=soft_keepout_pixel,
+        )
+
+    for road in layout["roads"]:
+        road_width = float(road["width"])
+        guidance_width = min(
+            road_width,
+            max(minimum_drivable_width, road_width - 2.0 * edge_margin),
+        )
+        draw_line(
+            draw,
+            road_paths[road["name"]],
+            origin,
+            resolution,
+            height_px,
+            guidance_width,
+            guidance_band_pixel,
+        )
+    for area in layout.get("paved_areas", []):
+        area_size = [float(value) for value in area["size"]]
+        guidance_size = [
+            min(size, max(minimum_drivable_width, size - 2.0 * edge_margin))
+            for size in area_size
+        ]
+        draw.polygon(
+            rect_polygon(
+                area["center"],
+                guidance_size,
+                origin,
+                resolution,
+                height_px,
+            ),
+            fill=guidance_band_pixel,
+        )
+
+    center_margin = edge_margin + guidance_band_width
+    for road in layout["roads"]:
+        road_width = float(road["width"])
+        free_width = min(
+            road_width,
+            max(minimum_drivable_width, road_width - 2.0 * center_margin),
+        )
+        draw_line(
+            draw,
+            road_paths[road["name"]],
+            origin,
+            resolution,
+            height_px,
+            free_width,
+            254,
+        )
+    for area in layout.get("paved_areas", []):
+        area_size = [float(value) for value in area["size"]]
+        free_size = [
+            min(size, max(minimum_drivable_width, size - 2.0 * center_margin))
+            for size in area_size
+        ]
+        draw.polygon(
+            rect_polygon(
+                area["center"],
+                free_size,
+                origin,
+                resolution,
+                height_px,
+            ),
+            fill=254,
+        )
+
+    for building in layout["buildings"]:
+        draw.polygon(
+            rect_polygon(
+                building["center"],
+                building["size"],
+                origin,
+                resolution,
+                height_px,
+            ),
+            fill=0,
+        )
+    return mask
+
+
 def make_maps(layout: dict, road_paths: dict[str, List[Point]], nav_maps: Path) -> None:
     b = layout["world_bounds"]
     res = float(layout["map_resolution"])
     navigation = layout.get("navigation", {})
     edge_margin = float(navigation.get("keepout_edge_margin", 0.0))
+    local_edge_margin = float(
+        navigation.get("local_keepout_edge_margin", edge_margin)
+    )
+    dynamic_edge_margin = float(
+        navigation.get("dynamic_keepout_edge_margin", local_edge_margin)
+    )
+    dynamic_recovery_margin = float(
+        navigation.get("dynamic_recovery_margin", 0.0)
+    )
     guidance_band_width = float(navigation.get("guidance_band_width", 0.0))
     minimum_drivable_width = float(navigation.get("minimum_drivable_width", 1.0))
     guidance_band_cost = float(navigation.get("guidance_band_cost", 12.0))
     soft_keepout_cost = float(navigation.get("soft_keepout_cost", 35.0))
-    if edge_margin < 0.0 or guidance_band_width < 0.0 or minimum_drivable_width <= 0.0:
+    if (
+        edge_margin < 0.0
+        or local_edge_margin < 0.0
+        or dynamic_edge_margin < 0.0
+        or dynamic_recovery_margin < 0.0
+        or dynamic_edge_margin > local_edge_margin
+        or local_edge_margin > edge_margin
+        or guidance_band_width < 0.0
+        or minimum_drivable_width <= 0.0
+    ):
         raise SystemExit(
-            "navigation margins must be non-negative and minimum width must be positive"
+            "navigation margins are invalid or minimum width is not positive"
         )
     if not 0.0 < guidance_band_cost < soft_keepout_cost < 100.0:
         raise SystemExit(
@@ -611,11 +752,8 @@ def make_maps(layout: dict, road_paths: dict[str, List[Point]], nav_maps: Path) 
     origin = [float(b["x_min"]), float(b["y_min"]), 0.0]
     localization_map = Image.new("L", (width_px, height_px), 205)
     localization_draw = ImageDraw.Draw(localization_map)
-    keepout_mask = Image.new("L", (width_px, height_px), 0)
-    keepout_draw = ImageDraw.Draw(keepout_mask)
 
-    # Draw the complete paved network first. In the keepout mask this is the
-    # recoverable shoulder between the free center lane and lethal off-road area.
+    # Draw the complete paved network into the localization map.
     for road in layout["roads"]:
         road_width = float(road["width"])
         draw_line(
@@ -627,86 +765,58 @@ def make_maps(layout: dict, road_paths: dict[str, List[Point]], nav_maps: Path) 
             road_width,
             254,
         )
-        draw_line(
-            keepout_draw,
-            road_paths[road["name"]],
-            origin,
-            res,
-            height_px,
-            road_width,
-            soft_keepout_pixel,
-        )
     for area in layout.get("paved_areas", []):
         area_size = [float(value) for value in area["size"]]
         localization_draw.polygon(
             rect_polygon(area["center"], area_size, origin, res, height_px),
             fill=254,
         )
-        keepout_draw.polygon(
-            rect_polygon(area["center"], area_size, origin, res, height_px),
-            fill=soft_keepout_pixel,
-        )
 
-    # Apply a low-cost guidance band before the free center. With the passes
-    # ordered by decreasing cost, intersecting roads retain a usable center.
-    for road in layout["roads"]:
-        road_width = float(road["width"])
-        guidance_width = min(
-            road_width,
-            max(minimum_drivable_width, road_width - 2.0 * edge_margin),
-        )
-        draw_line(
-            keepout_draw,
-            road_paths[road["name"]],
-            origin,
-            res,
-            height_px,
-            guidance_width,
-            guidance_band_pixel,
-        )
-    for area in layout.get("paved_areas", []):
-        area_size = [float(value) for value in area["size"]]
-        guidance_size = [
-            min(size, max(minimum_drivable_width, size - 2.0 * edge_margin))
-            for size in area_size
-        ]
-        keepout_draw.polygon(
-            rect_polygon(area["center"], guidance_size, origin, res, height_px),
-            fill=guidance_band_pixel,
-        )
-
-    # The zero-cost lane gives both the global planner and each replan a stable
-    # center target instead of treating the full paved width as equivalent.
-    center_margin = edge_margin + guidance_band_width
-    for road in layout["roads"]:
-        road_width = float(road["width"])
-        free_width = min(
-            road_width,
-            max(minimum_drivable_width, road_width - 2.0 * center_margin),
-        )
-        draw_line(
-            keepout_draw,
-            road_paths[road["name"]],
-            origin,
-            res,
-            height_px,
-            free_width,
-            254,
-        )
-    for area in layout.get("paved_areas", []):
-        area_size = [float(value) for value in area["size"]]
-        free_size = [
-            min(size, max(minimum_drivable_width, size - 2.0 * center_margin))
-            for size in area_size
-        ]
-        keepout_draw.polygon(
-            rect_polygon(area["center"], free_size, origin, res, height_px),
-            fill=254,
-        )
+    keepout_mask = make_keepout_mask(
+        layout,
+        road_paths,
+        origin,
+        res,
+        width_px,
+        height_px,
+        edge_margin,
+        0.0,
+        guidance_band_width,
+        minimum_drivable_width,
+        guidance_band_pixel,
+        soft_keepout_pixel,
+    )
+    local_keepout_mask = make_keepout_mask(
+        layout,
+        road_paths,
+        origin,
+        res,
+        width_px,
+        height_px,
+        local_edge_margin,
+        0.0,
+        guidance_band_width,
+        minimum_drivable_width,
+        guidance_band_pixel,
+        soft_keepout_pixel,
+    )
+    dynamic_keepout_mask = make_keepout_mask(
+        layout,
+        road_paths,
+        origin,
+        res,
+        width_px,
+        height_px,
+        dynamic_edge_margin,
+        dynamic_recovery_margin,
+        guidance_band_width,
+        minimum_drivable_width,
+        guidance_band_pixel,
+        soft_keepout_pixel,
+    )
     for building in layout["buildings"]:
         polygon = rect_polygon(building["center"], building["size"], origin, res, height_px)
         localization_draw.polygon(polygon, fill=0)
-        keepout_draw.polygon(polygon, fill=0)
 
     wall = layout["wall"]
     wall_center_x = (float(wall["west_x"]) + float(wall["east_x"])) / 2
@@ -752,14 +862,22 @@ def make_maps(layout: dict, road_paths: dict[str, List[Point]], nav_maps: Path) 
 
     spawn = (float(layout["spawn_pose"]["x"]), float(layout["spawn_pose"]["y"]))
     spx = world_to_pixel(spawn, origin, res, height_px)
-    if keepout_mask.getpixel(spx) < 250:
+    if (
+        keepout_mask.getpixel(spx) < 250
+        or local_keepout_mask.getpixel(spx) < 250
+        or dynamic_keepout_mask.getpixel(spx) < 250
+    ):
         raise SystemExit(f"spawn point {spawn} is not on free road/platform in generated map")
 
     nav_maps.mkdir(parents=True, exist_ok=True)
     map_path = nav_maps / "campus_delivery_map.pgm"
     mask_path = nav_maps / "campus_keepout_mask.pgm"
+    local_mask_path = nav_maps / "campus_local_keepout_mask.pgm"
+    dynamic_mask_path = nav_maps / "campus_dynamic_keepout_mask.pgm"
     write_pgm(localization_map, map_path)
     write_pgm(keepout_mask, mask_path)
+    write_pgm(local_keepout_mask, local_mask_path)
+    write_pgm(dynamic_keepout_mask, dynamic_mask_path)
 
     def yaml_text(image: str, mode: str) -> str:
         return (
@@ -778,6 +896,14 @@ def make_maps(layout: dict, road_paths: dict[str, List[Point]], nav_maps: Path) 
     )
     (nav_maps / "campus_keepout_mask.yaml").write_text(
         yaml_text("campus_keepout_mask.pgm", "scale"),
+        encoding="utf-8",
+    )
+    (nav_maps / "campus_local_keepout_mask.yaml").write_text(
+        yaml_text("campus_local_keepout_mask.pgm", "scale"),
+        encoding="utf-8",
+    )
+    (nav_maps / "campus_dynamic_keepout_mask.yaml").write_text(
+        yaml_text("campus_dynamic_keepout_mask.pgm", "scale"),
         encoding="utf-8",
     )
 

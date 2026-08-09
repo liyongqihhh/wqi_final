@@ -68,12 +68,27 @@ class BatteryManager(Node):
             "publish_rate": 2.0,
             "maximum_update_step_s": 1.0,
         }
+        self.declare_parameter("external_charger_control", False)
+        self.declare_parameter("maximum_measured_acceleration_mps2", 20.0)
         for name, value in defaults.items():
             self.declare_parameter(name, value)
         values = {
             name: self.get_parameter(name).value
             for name in defaults
         }
+        self.external_charger_control = bool(
+            self.get_parameter("external_charger_control").value
+        )
+        self.maximum_measured_acceleration_mps2 = float(
+            self.get_parameter("maximum_measured_acceleration_mps2").value
+        )
+        if (
+            not math.isfinite(self.maximum_measured_acceleration_mps2)
+            or self.maximum_measured_acceleration_mps2 <= 0.0
+        ):
+            raise ValueError(
+                "maximum_measured_acceleration_mps2 must be positive"
+            )
         self.parameters = BatteryParameters.from_mapping(values)
         self.model = BatteryModel(self.parameters)
 
@@ -82,6 +97,7 @@ class BatteryManager(Node):
         self.phase = "IDLE"
         self.vehicle_state = LANDED
         self.docked = False
+        self.charger_available = not self.external_charger_control
         self.velocity_mps = (0.0, 0.0, 0.0)
         self.previous_velocity_mps = None
         self.filtered_acceleration_mps2 = [0.0, 0.0, 0.0]
@@ -123,6 +139,14 @@ class BatteryManager(Node):
             transient_qos,
             callback_group=self.callback_group,
         )
+        if self.external_charger_control:
+            self.create_subscription(
+                Bool,
+                "/ugv/charger_available",
+                self._charger_available_callback,
+                transient_qos,
+                callback_group=self.callback_group,
+            )
         self.create_subscription(
             Float32,
             "payload_mass",
@@ -182,7 +206,9 @@ class BatteryManager(Node):
             "UAV battery manager ready: "
             f"{self.parameters.capacity_wh:.1f} Wh, "
             f"initial {self.model.soc * 100.0:.1f}%, "
-            f"reserve {self.parameters.reserve_percentage * 100.0:.1f}%"
+            f"reserve {self.parameters.reserve_percentage * 100.0:.1f}%, "
+            f"external charger control "
+            f"{'enabled' if self.external_charger_control else 'disabled'}"
         )
 
     def _phase_callback(self, message: String) -> None:
@@ -206,6 +232,10 @@ class BatteryManager(Node):
         with self.lock:
             self.docked = bool(message.data)
 
+    def _charger_available_callback(self, message: Bool) -> None:
+        with self.lock:
+            self.charger_available = bool(message.data)
+
     def _payload_callback(self, message: Float32) -> None:
         payload = float(message.data)
         if (
@@ -225,7 +255,7 @@ class BatteryManager(Node):
             return (
                 self.phase,
                 self.vehicle_state == FLYING,
-                self.docked,
+                self.docked and self.charger_available,
                 self.velocity_mps,
                 self.payload_mass_kg,
             )
@@ -240,6 +270,13 @@ class BatteryManager(Node):
         remaining = (now_ns - self.last_update_ns) / 1e9
         self.last_update_ns = now_ns
         phase, flying, docked, velocity, payload = self._operating_state()
+        if not all(math.isfinite(value) for value in velocity):
+            self.get_logger().error(
+                "Ignoring non-finite UAV odometry velocity in battery model"
+            )
+            velocity = (0.0, 0.0, 0.0)
+            self.previous_velocity_mps = None
+            self.filtered_acceleration_mps2 = [0.0, 0.0, 0.0]
         acceleration = [0.0, 0.0, 0.0]
         if self.previous_velocity_mps is not None and remaining > 1e-9:
             alpha = self.parameters.acceleration_filter_alpha
@@ -247,6 +284,13 @@ class BatteryManager(Node):
                 raw_acceleration = (
                     velocity[index] - self.previous_velocity_mps[index]
                 ) / remaining
+                raw_acceleration = max(
+                    -self.maximum_measured_acceleration_mps2,
+                    min(
+                        self.maximum_measured_acceleration_mps2,
+                        raw_acceleration,
+                    ),
+                )
                 self.filtered_acceleration_mps2[index] += alpha * (
                     raw_acceleration
                     - self.filtered_acceleration_mps2[index]
@@ -263,20 +307,28 @@ class BatteryManager(Node):
         )
         while remaining > 1e-9:
             step = min(remaining, self.parameters.maximum_update_step_s)
-            self.model.step(
-                step,
-                phase,
-                flying,
-                docked,
-                horizontal_speed_mps=horizontal_speed,
-                vertical_speed_mps=velocity[2],
-                horizontal_acceleration_mps2=horizontal_acceleration,
-                vertical_acceleration_mps2=acceleration[2],
-                horizontal_acceleration_velocity_dot_m2ps3=(
-                    acceleration_velocity_dot
-                ),
-                payload_mass_kg=payload,
-            )
+            try:
+                self.model.step(
+                    step,
+                    phase,
+                    flying,
+                    docked,
+                    horizontal_speed_mps=horizontal_speed,
+                    vertical_speed_mps=velocity[2],
+                    horizontal_acceleration_mps2=horizontal_acceleration,
+                    vertical_acceleration_mps2=acceleration[2],
+                    horizontal_acceleration_velocity_dot_m2ps3=(
+                        acceleration_velocity_dot
+                    ),
+                    payload_mass_kg=payload,
+                )
+            except ValueError as error:
+                self.get_logger().error(
+                    f"Battery integration sample rejected: {error}"
+                )
+                self.previous_velocity_mps = None
+                self.filtered_acceleration_mps2 = [0.0, 0.0, 0.0]
+                break
             remaining -= step
         self._log_state_changes()
 

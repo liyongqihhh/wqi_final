@@ -48,6 +48,38 @@ def test_ugv_delivery_order_is_the_exact_shortest_closed_route():
     assert _cost(waypoints, optimized) == pytest.approx(expected_cost)
 
 
+def test_ugv_optimizer_uses_supplied_road_costs():
+    waypoints = {
+        "home": {"x": 0.0, "y": 0.0},
+        "a": {"x": 1.0, "y": 0.0},
+        "b": {"x": 2.0, "y": 0.0},
+        "c": {"x": 3.0, "y": 0.0},
+    }
+    costs = {
+        ("home", "a"): 80.0,
+        ("home", "b"): 20.0,
+        ("home", "c"): 60.0,
+        ("a", "b"): 20.0,
+        ("a", "c"): 70.0,
+        ("b", "a"): 20.0,
+        ("b", "c"): 20.0,
+        ("c", "a"): 20.0,
+        ("c", "b"): 20.0,
+        ("a", "home"): 20.0,
+        ("b", "home"): 80.0,
+        ("c", "home"): 60.0,
+    }
+
+    optimized = optimize_order(
+        waypoints,
+        ["a", "b", "c"],
+        "home",
+        route_distance=lambda first, second: costs[(first, second)],
+    )
+
+    assert optimized == ["b", "c", "a"]
+
+
 def test_ugv_visits_duplicate_building_only_once():
     waypoints = {
         "home": {"x": 0.0, "y": 0.0},

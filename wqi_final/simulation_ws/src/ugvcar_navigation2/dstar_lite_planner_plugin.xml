@@ -1,0 +1,8 @@
+<library path="ugvcar_dstar_lite_planner">
+  <class
+    name="ugvcar_navigation2/DStarLitePlanner"
+    type="ugvcar_navigation2::DStarLitePlanner"
+    base_class_type="nav2_core::GlobalPlanner">
+    <description>D* Lite incremental global planner for changing campus costs.</description>
+  </class>
+</library>

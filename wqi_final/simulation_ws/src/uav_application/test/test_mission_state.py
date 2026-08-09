@@ -1,5 +1,6 @@
 from uav_application.mission_states import (
     MissionPhase,
+    is_same_delivery_pad,
     is_settled_at_altitude,
     is_settled_on_ground,
     is_terminal,
@@ -46,3 +47,9 @@ def test_custom_home_selects_cooperative_local_delivery_profile():
     assert uses_local_delivery_profile("teaching_building")
     assert not uses_local_delivery_profile("")
     assert not uses_local_delivery_profile("   ")
+
+
+def test_same_delivery_pad_uses_platform_safe_approach():
+    assert is_same_delivery_pad(38.0, -20.0, 38.2, -20.1)
+    assert not is_same_delivery_pad(38.0, -20.0, 39.0, -20.0)
+    assert not is_same_delivery_pad(0.0, 0.0, 0.0, 0.0, -0.1)

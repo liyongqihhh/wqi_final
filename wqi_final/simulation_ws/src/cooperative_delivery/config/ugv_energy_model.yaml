@@ -1,0 +1,41 @@
+/ugv/energy_manager:
+  ros__parameters:
+    # Two independent packs: one drives the UGV, the other only charges the UAV.
+    drive_capacity_wh: 300.0
+    charging_capacity_wh: 250.0
+    drive_nominal_voltage: 24.0
+    charging_nominal_voltage: 24.0
+    initial_drive_percentage: 0.80
+    initial_charging_percentage: 0.80
+    drive_reserve_percentage: 0.20
+    charging_reserve_percentage: 0.10
+
+    # The URDF mass is 1.28 kg including chassis, wheels and sensors. The UAV
+    # mass is added only while the docking state is true. Cargo mass changes
+    # after every delivery and is supplied by the cooperative mission manager.
+    base_mass_kg: 1.28
+    docked_uav_mass_kg: 1.477
+    gravity_mps2: 9.80665
+    rolling_resistance_coefficient: 0.030
+    air_density_kgpm3: 1.225
+    aerodynamic_drag_area_m2: 0.080
+
+    # Electrical drive model: idle electronics plus speed/turn losses and the
+    # mass-dependent rolling, aerodynamic and positive-acceleration work.
+    idle_power_w: 42.0
+    linear_loss_power_w_per_mps: 115.0
+    angular_power_w_per_radps: 18.0
+    drivetrain_efficiency: 0.85
+
+    # The charging pack supplies the negative UAV battery power through an
+    # independent conversion stage. It never powers the UGV drivetrain.
+    charger_transfer_efficiency: 0.90
+    charger_idle_power_w: 2.0
+
+    planning_speed_mps: 0.40
+    planned_target_service_time_s: 300.0
+    prediction_margin_factor: 1.20
+    acceleration_filter_alpha: 0.25
+    update_rate: 10.0
+    publish_rate: 2.0
+    maximum_update_step_s: 1.0

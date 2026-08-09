@@ -1,0 +1,9 @@
+ugv_energy_model:
+  # Configurable simulation estimate. Values are not physical battery telemetry.
+  idle_power_w: 42.0
+  linear_power_w_per_mps: 115.0
+  angular_power_w_per_radps: 18.0
+  payload_power_w_per_kg: 4.0
+  drivetrain_efficiency: 0.85
+  maximum_update_step_s: 1.0
+  maximum_position_jump_m: 2.0

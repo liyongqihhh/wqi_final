@@ -4,7 +4,6 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    ExecuteProcess,
     IncludeLaunchDescription,
     RegisterEventHandler,
 )
@@ -83,30 +82,21 @@ def generate_launch_description():
         output="screen",
     )
 
-    load_joint_state_controller = ExecuteProcess(
-        cmd=[
-            "ros2",
-            "control",
-            "load_controller",
-            "--set-state",
-            "active",
+    spawn_controllers = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=[
             "ugvcar_joint_state_broadcaster",
-        ],
-        output="screen",
-    )
-
-    load_diff_drive_controller = ExecuteProcess(
-        cmd=[
-            "ros2",
-            "control",
-            "load_controller",
-            "--set-state",
-            "active",
             "ugvcar_diff_drive_controller",
+            "--controller-manager-timeout",
+            "120",
+            "--service-call-timeout",
+            "60",
+            "--switch-timeout",
+            "60",
         ],
         output="screen",
     )
-
     return LaunchDescription(
         [
             DeclareLaunchArgument(
@@ -150,13 +140,7 @@ def generate_launch_description():
             RegisterEventHandler(
                 OnProcessExit(
                     target_action=spawn_entity,
-                    on_exit=[load_joint_state_controller],
-                )
-            ),
-            RegisterEventHandler(
-                OnProcessExit(
-                    target_action=load_joint_state_controller,
-                    on_exit=[load_diff_drive_controller],
+                    on_exit=[spawn_controllers],
                 )
             ),
         ]

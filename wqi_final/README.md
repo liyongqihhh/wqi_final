@@ -1,86 +1,131 @@
-# wqi_final
+# wqi_final：校园空地协同物流配送仿真系统
 
-ROS 2 + Gazebo/RViz simulation project for a graduation design about campus
-logistics with independently validated UGV and UAV subsystems and a combined
-UGV-UAV delivery workflow.
+本项目是基于 ROS 2 Humble、Gazebo Classic、RViz2 和 Nav2 的毕业设计仿真平台，
+面向校园最后一公里物流配送。系统包含可独立运行的 UGV 地面无人车、UAV 四旋翼
+无人机，以及带任务规划、物理停靠、电量约束和自动充电的 UGV-UAV 协同配送流程。
 
-Release `v1.0.0` is the PC-simulation baseline. It contains only the packages
-used by the five graduation-design stages; tutorial patrol, example action
-clients, and unused custom Nav2 plugin packages have been removed.
+当前版本仅用于电脑端仿真，不需要部署到开发板。仓库已经删除 Hello World、基础
+话题/服务示例、教学巡逻节点、rosbag 练习和硬件启动代码，仅保留与毕业设计直接相关
+的源代码。`v1.0.0` 是清理后的第一版仿真基线。
 
-The current codebase keeps the simulation and navigation parts that are useful for the final project, and removes chapter-style tutorial examples such as hello world, basic topic/service demos, rosbag exercises, and hardware-board bringup code.
-
-## Project Layout
+## 1. 项目目录
 
 ```text
 wqi_final/
+├── README.md
+├── docs/
+│   ├── system_architecture.md       # 系统架构、协同状态机和数据流
+│   ├── completion_checklist.md      # 任务书逐项完成度和论文收尾清单
+│   ├── evaluation_method.md         # 实验变量、指标、矩阵和统计方法
+│   ├── evaluation_report.md         # 已完成的构建、测试和运行证据
+│   ├── paper_based_dynamic_navigation.md # D* Lite 与预测式 DWA 的理论和实现
+│   ├── cooperative_delivery.md      # 停靠插件和协同任务说明
+│   ├── uav_subsystem.md             # UAV 动力学、传感器和安全控制
+│   └── uav_battery.md               # UAV 功率、电池和充电模型
 └── simulation_ws/
     └── src/
-        ├── ugvcar_description       # UGV model, Gazebo worlds, campus map generator, ros2_control config
-        ├── ugvcar_navigation2       # Nav2 maps, parameters, launch files
-        ├── ugvcar_application       # Optimized campus delivery manager
-        ├── uav_interfaces            # FlyToPose and ExecuteDelivery actions
-        ├── uav_description           # Quadrotor, 3D lidar, down sensors, IMU, TF, RViz config
-        ├── uav_control               # Flight actions, sensor fusion, and 3D safety envelope
-        ├── uav_navigation            # UAV pads, 15 m air corridors, RViz markers
-        ├── uav_application           # Autonomous delivery mission state machine
-        ├── uav_bringup               # Standalone campus UAV launch
-        ├── cooperative_delivery_interfaces # Combined mission action
-        ├── cooperative_delivery      # UGV-UAV manager, docking plugin, joint launch
-        ├── simulation_ui             # Five-mode PyQt5 simulation control panel
-        └── vendor/sjtu_drone_description # GPL-3.0 Gazebo force/torque dynamics plugin
+        ├── ugvcar_description       # UGV 模型、Gazebo 场景和校园地图生成器
+        ├── ugvcar_navigation2       # Nav2 地图、参数和启动文件
+        ├── ugvcar_navigation2_interfaces # 动态障碍位置/速度结构化消息
+        ├── ugvcar_application       # UGV 多目标配送管理器
+        ├── uav_interfaces           # UAV Action 和服务接口
+        ├── uav_description          # UAV 模型、传感器、TF 和 RViz 配置
+        ├── uav_control              # 飞行控制、电量模型和三维安全监控
+        ├── uav_navigation           # UAV 航点、15 m 航路图和路径规划
+        ├── uav_application          # UAV 配送任务状态机
+        ├── uav_bringup              # 独立 UAV 校园仿真启动
+        ├── cooperative_delivery_interfaces # 空地协同 Action 接口
+        ├── cooperative_delivery     # 协同管理器、停靠插件和联合启动
+        ├── campus_dynamic_obstacles # 可复现的地面/空中物理动态障碍
+        ├── delivery_evaluation      # 自动实验、指标采集、报告和图表
+        ├── simulation_ui            # 六阶段 PyQt5 控制与实时监控界面
+        └── vendor/sjtu_drone_description # Gazebo 四旋翼力/力矩动力学插件
 ```
 
-## Design Documents
+## 2. 已实现功能
 
-- [`docs/system_architecture.md`](docs/system_architecture.md): package
-  boundaries, deployment architecture, cooperative state flow, and battery
-  decision flow.
-- [`docs/evaluation_report.md`](docs/evaluation_report.md): reproducible build,
-  test, and simulation evidence, with formal experiments clearly marked.
-- [`docs/cooperative_delivery.md`](docs/cooperative_delivery.md): docking and
-  cooperative mission implementation.
-- [`docs/uav_subsystem.md`](docs/uav_subsystem.md): UAV dynamics, sensors,
-  frames, safety control, and limitations.
-- [`docs/uav_battery.md`](docs/uav_battery.md): propulsion, payload, battery,
-  preflight admission, and charging equations.
+- 在 Gazebo 中建立包含 11 栋主要建筑、闭合道路、碰撞体和配送点的校园场景。
+- 阶段 1 至 5 使用 Nav2 `SmacPlanner2D + Regulated Pure Pursuit` 完成稳定静态
+  导航；阶段 6 切换为 `D* Lite + DWB`。D* Lite 复用上次搜索状态，只修复动态
+  代价变化影响的网格；自定义 `PredictiveCollisionCritic` 根据 UGV 和障碍物的相对
+  速度、候选轨迹及预计碰撞时间评价 DWB 轨迹，覆盖前方、横穿和斜后方追赶工况。
+  系统不执行固定倒车、固定转角或固定等待。
+- UGV 多目标任务将 `campus_layout.yaml` 道路中心线构造成加权道路图，先用
+  Dijkstra 计算站点间道路距离，再求精确最短闭合访问顺序；每个实际行驶段仍由
+  Nav2 规划，并在阶段 6 由 D* Lite 根据动态代价增量重规划。
+- UAV 使用 Gazebo 力/力矩动力学完成物理起飞、悬停、巡航、下降和降落，不使用
+  `/set_entity_state` 持续修改坐标模拟飞行。
+- UAV 配备顶部 3D 雷达、下视相机、下向测距、四个斜下短距传感器和 IMU。
+- UAV 顶部 3D 雷达持续判断三维轨迹冲突，每 `0.5 s` 生成平滑绕障路径并通过前视
+  点跟随黄色 `/uav/replanned_path`；`1.8 m` 三维安全球用于紧急保护。持续阻塞时
+  禁用当前航路边并重新运行 Dijkstra，而不是执行固定方向和固定距离的绕行动作。
+- 协同系统使用 Gazebo 固定关节将 UAV 停靠在 UGV 上；UGV 到达建筑门口并稳定后，
+  UAV 才解锁起飞，配送结束后重新落到 UGV 并锁定。
+- 单个任务最多支持 10 件货物，每件货物分别设置目标、楼层和质量，并保持目标、
+  楼层、载荷三组数据在路线优化后仍一一对应。
+- UAV 电量模型区分起飞、加速、巡航、转弯、悬停、下降和停靠充电；起飞前检查
+  完整任务能量和安全返航余量。
+- UGV 使用相互独立的驱动电池和 UAV 充电电池。驱动功率随速度、转向、加速度、
+  剩余货物质量和停靠 UAV 质量变化；充电电池只通过充电转换器向 UAV 供能。
+- 协同任务开始前同时检查 UAV 架次能量、UGV 完整道路行程能量和有限充电电池预算，
+  任一电池低于任务需求与安全储备时均拒绝任务。
+- 支持 `none`、`low`、`medium`、`high` 四档可复现动态障碍场景。
+- 支持 UGV、UAV、空地协同三种模式的自动实验，输出任务成功率、真实动态避障
+  成功率、时间、路径、误差、恢复次数、重规划次数、能耗、SOC、最小净空和碰撞
+  事件数。即使 Action 返回成功，检测到物理包络相交时该次实验仍判定为失败。
+- 提供六阶段 PyQt5 控制界面，分别显示 UAV 飞行电池、UGV 驱动电池、UGV 充电
+  电池及其功率，并显示停靠、安全状态、机器人位置、动态障碍数量和重规划次数。
 
-## Current Capability
+## 3. 编译与环境加载
 
-- Simulate a UGVcar-style ground vehicle in Gazebo.
-- Run Nav2 localization, planning, and navigation in RViz.
-- Send single goals or waypoint goals through ROS 2 nodes.
-- Provide a campus logistics delivery scene with 11 major buildings, a connected circulation network without duplicate or dead-end roads, an occupancy map, and a keepout mask.
-- Run a standalone UAV mission from the logistics center to a named campus
-  delivery pad, including physical takeoff, hover, 15 m corridor cruise,
-  delivery, return, and landing.
-- Publish a top-mounted 3D lidar point cloud, a down-view RGB camera, one
-  downward range, four diagonal short-range sensors, IMU, and safety status.
-- Fuse the lidar and short-range sensors into a 1.8 m 3D safety sphere that
-  holds position before collision and resumes after a transient obstacle.
-- Use complete body, arm, rotor, and landing-skid collisions with controlled
-  XY-held descent instead of cutting thrust above the ground.
-- Carry the UAV on the UGV with a Gazebo fixed joint, release it at a named
-  launch point, execute an aerial delivery, redock it, and return the UGV home.
-- Accept up to ten cargo items with independent destinations, floors, and
-  masses, then compute an exact shortest visit order without breaking the
-  item-to-payload mapping.
-- Simulate distinct UAV takeoff, cruise, hover, landing, and idle power use;
-  reject missions that cannot preserve a safe-return reserve, and charge the
-  UAV automatically whenever it is docked on the UGV.
-- Start the UGV, UAV, Nav2, docking plugin, task managers, and combined RViz
-  view from one launch file while creating only one Gazebo server.
+### 3.1 从 GitHub 完整复现
 
-## Build
+在已安装 Ubuntu 22.04、ROS 2 Humble 和 Gazebo Classic 的新环境中，将仓库
+克隆为 `~/design_final`，这样目录结构与本文后续命令保持一致：
+
+```bash
+git clone https://github.com/liyongqihhh/wqi_final.git ~/design_final
+cd ~/design_final/wqi_final/simulation_ws
+source /opt/ros/humble/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
+colcon build
+source install/setup.bash
+colcon test --event-handlers console_cohesion+
+colcon test-result --all --verbose
+```
+
+编译和测试通过后，可先进行无图形界面的联合仿真检查：
+
+```bash
+ros2 launch cooperative_delivery cooperative_delivery.launch.py \
+  gui:=false rviz:=false \
+  enable_energy_constraints:=false enable_dynamic_obstacles:=false
+```
+
+仓库只保存 `simulation_ws/src/` 源码、配置、地图和文档；`build/`、`install/`
+和 `log/` 必须在克隆后由 `colcon build` 重新生成，不能从其他电脑复制。
+
+每次打开新终端后，先执行：
 
 ```bash
 cd ~/design_final/wqi_final/simulation_ws
 source /opt/ros/humble/setup.bash
+```
+
+首次使用或修改源代码后编译整个工作空间：
+
+```bash
 colcon build
 source install/setup.bash
 ```
 
-To build only the standalone UAV subsystem:
+如果代码没有重新编译，只需要加载现有安装环境：
+
+```bash
+source install/setup.bash
+```
+
+仅编译 UAV 子系统：
 
 ```bash
 colcon build --packages-select \
@@ -89,22 +134,166 @@ colcon build --packages-select \
 source install/setup.bash
 ```
 
-To build the combined UGV-UAV subsystem and its dependencies:
+编译空地协同系统及其依赖：
 
 ```bash
 colcon build --packages-up-to cooperative_delivery uav_bringup
 source install/setup.bash
 ```
 
-## Desktop Simulation Control Panel
+## 4. 四档动态障碍启动方法
 
-The desktop control panel starts any one of the five graduation-design test
-stages and sends its real ROS 2 route command. It configures up to ten cargo
-items, with an independent destination, floor, and mass for every item, plus
-the initial UAV battery, return behavior, sensor-ray display, and whether RViz,
-Gazebo, or both viewers are opened.
+动态障碍共有四档。障碍是带碰撞体的 Gazebo 实体，通过物理速度沿固定路线往返，
+不是连续修改坐标的动画。相同 `random_seed` 会选择相同路线，便于重复实验。
 
-Build and start it with:
+最直接的打开位置在图形界面：运行 `ros2 run simulation_ui simulation_dashboard`，
+左侧选择 **阶段 6：动态障碍协同配送**，然后在任务配置区的 **动态障碍密度** 下拉框
+选择 `无动态障碍`、`低密度`、`中密度` 或 `高密度`。阶段 1 至 5 会自动锁定为
+`无动态障碍`，只有阶段 6 可以切换这四档。
+
+| 参数 | 地面动态障碍 | 空中动态障碍 | 总数 | 用途 |
+|---|---:|---:|---:|---|
+| `none` | 0 | 0 | 0 | 无障碍基准组 |
+| `low` | 3 | 0 | 3 | 低密度地面障碍 |
+| `medium` | 5 | 1 | 6 | 中密度空地障碍 |
+| `high` | 8 | 2 | 10 | 高密度压力测试 |
+
+### 4.1 使用联合启动文件打开
+
+阶段 6 必须由联合启动文件同时启用动态障碍、UGV 360 度动态障碍预测器和 UAV
+3D 雷达重规划器。不要先按静态阶段启动后再单独追加障碍生成器，否则机器人侧的
+动态重规划参数不会按阶段 6 启用。
+
+终端 1 启动低密度阶段 6 仿真：
+
+```bash
+ros2 launch cooperative_delivery cooperative_delivery.launch.py \
+  gui:=true rviz:=false visualize_sensor_rays:=false \
+  enable_energy_constraints:=true enable_dynamic_obstacles:=true \
+  obstacle_density:=low random_seed:=42 \
+  initial_battery_percentage:=0.80 \
+  initial_ugv_drive_battery_percentage:=0.80 \
+  initial_ugv_charging_battery_percentage:=0.80
+```
+
+将 `obstacle_density:=low` 改为 `none`、`medium` 或 `high` 即可切换其他密度。
+`none` 仍使用阶段 6 的机器人控制链，但不会生成动态障碍。
+阶段 4、5、6 均按 UGV 搭载 UAV 后的 `0.60 m` 组合外廓规划；单独运行 UGV 时
+仍使用 `0.22 m` 物理半径。动态障碍物严格沿场景配置的固定路线和速度运行，不查询
+UGV/UAV 位置，也不会主动减速或让路。UGV 使用完整 360 度激光扫描聚类并在地图
+坐标系中估计障碍速度，计算 `15 s` 预测窗内的最近会遇状态，并发布结构化轨迹
+`/ugv/tracked_dynamic_obstacles` 及固定风险点 `/scan_dynamic_predictions`。预测点
+只进入全局代价地图；D* Lite 以 `1 Hz` 增量修复受代价变化影响的路径，并在瞬时
+规划失败时保留上一条仍有效的路径，避免反复取消控制器。DWB 以 `10 Hz` 采样
+加速度受限的非完整约束轨迹，自定义预测碰撞评价器在 `4 s` 局部时域内比较候选轨迹
+与运动障碍物的碰撞时间和净空，再选择安全且保持前进的速度。局部代价地图仍只处理
+真实 `/scan`，承担静态几何约束和及时清障；前向碰撞监视器仅作为最后的紧急停止层。
+前方、横穿和斜后方追近的障碍使用同一套相对运动模型，不执行固定倒车、固定角度
+转弯或固定等待。全局代价地图继续使用
+`1.0 m` 道路软边界来生成居中的安全路线；局部代价地图使用 `0.65 m` 软边界和
+`0.8 m` 障碍膨胀半径，让小车在绕障时可以使用更多铺装路面。道路外仍是致命代价，
+`0.60 m` 协同外廓没有缩小。
+
+UAV 使用顶部 3D 雷达的最近有效障碍向量，每 `0.5 s` 重算平滑三维绕障路径，并以
+前视点跟随 `/uav/replanned_path`。绕障路径保持向目标前进，不使用预设的
+左、右、上、下固定绕点；障碍离开后恢复目标直线路径。
+
+终端 2 发送协同任务：
+
+```bash
+ros2 action send_goal /cooperative_delivery/execute_mission \
+  cooperative_delivery_interfaces/action/ExecuteCooperativeDelivery \
+  "{targets: ['teaching_building'], return_home: true}" --feedback
+```
+
+动态障碍实体显示在 Gazebo 中。联合 RViz 同时显示 UGV 全局和局部代价地图、
+UGV 黄色实时路线 `/plan`、UAV 青色任务路线 `/uav/planned_path`、UAV 黄色动态
+绕障路线 `/uav/replanned_path` 和橙色实际轨迹 `/uav/path`。切换密度前应按
+`Ctrl+C` 结束全部进程并重新启动 Gazebo；不要同时运行两个障碍生成器，否则旧实体
+不会自动删除。
+
+机器人侧避障状态可通过以下话题检查：
+
+```bash
+ros2 topic echo /ugv/dynamic_replanning/status
+ros2 topic echo /ugv/dynamic_replanning/tracked_obstacles
+ros2 topic echo /ugv/tracked_dynamic_obstacles
+ros2 topic echo /ugv/dstar_lite/status
+ros2 topic echo /ugv/predictive_dwa/status
+ros2 topic echo /scan_dynamic_predictions
+ros2 topic echo /plan
+ros2 topic echo /uav/safety/status
+ros2 topic echo /uav/safety/nearest_obstacle
+ros2 topic echo /uav/dynamic_replanning/status
+ros2 topic echo /uav/dynamic_replanning/count
+ros2 topic echo /uav/replanned_path
+```
+
+### 4.2 一条命令自动启动、运行任务并保存结果
+
+下面四条命令会自动启动协同仿真、生成指定密度障碍、执行教学楼配送、记录指标，
+任务完成后自动关闭该批次。`gui:=true rviz:=false` 用于在 Gazebo 中观察障碍；在
+VirtualBox 中做正式计时实验时应改为 `gui:=false rviz:=false`。
+
+```bash
+# 无障碍
+ros2 launch delivery_evaluation experiment.launch.py \
+  mode:=cooperative scenario:=teaching_building \
+  obstacle_density:=none repetitions:=1 random_seed:=42 \
+  results_dir:=$PWD/experiment_results gui:=true rviz:=false
+```
+
+```bash
+# 低密度
+ros2 launch delivery_evaluation experiment.launch.py \
+  mode:=cooperative scenario:=teaching_building \
+  obstacle_density:=low repetitions:=1 random_seed:=42 \
+  results_dir:=$PWD/experiment_results gui:=true rviz:=false
+```
+
+```bash
+# 中密度
+ros2 launch delivery_evaluation experiment.launch.py \
+  mode:=cooperative scenario:=teaching_building \
+  obstacle_density:=medium repetitions:=1 random_seed:=42 \
+  results_dir:=$PWD/experiment_results gui:=true rviz:=false
+```
+
+```bash
+# 高密度
+ros2 launch delivery_evaluation experiment.launch.py \
+  mode:=cooperative scenario:=teaching_building \
+  obstacle_density:=high repetitions:=1 random_seed:=42 \
+  results_dir:=$PWD/experiment_results gui:=true rviz:=false
+```
+
+查看当前障碍数量和场景信息：
+
+```bash
+ros2 topic echo /dynamic_obstacles/count
+ros2 topic echo /dynamic_obstacles/scenario
+```
+
+评测器会按照相同 `obstacle_density` 和 `random_seed` 订阅本批次实际生成的每个
+`/dynamic_obstacles/<name>/odom`。地面障碍按二维表面净间距与 UGV 判断，空中
+障碍按三维表面净间距与 UAV 判断：
+
+```text
+clearance = center_distance - robot_envelope_radius - obstacle_radius
+collision = clearance <= 0
+avoidance_success_rate = collision_free_runs / total_runs
+```
+
+持续接触只记一次碰撞，分离后再次接触才记为新事件。协同 UGV、独立 UGV 和 UAV
+的判定包络半径分别为 `0.60 m`、`0.22 m` 和 `0.56 m`。
+
+## 5. 图形化控制界面
+
+控制界面可以选择六个毕业设计阶段，设置最多 10 件货物的配送位置、楼层和质量，
+设置 UAV 飞行电池、UGV 驱动电池、UGV 充电电池的初始电量，以及是否返航、是否
+显示传感器射线、打开 RViz/Gazebo 的方式。阶段 6 还可以直接选择四档动态障碍密度。
+
+编译并启动界面：
 
 ```bash
 cd ~/design_final/wqi_final/simulation_ws
@@ -114,137 +303,97 @@ source install/setup.bash
 ros2 run simulation_ui simulation_dashboard
 ```
 
-Use the left mode list to select Stage 1 through Stage 5. Set `件数`, complete
-one row in the cargo table for every package, then
-choose `RViz`, `Gazebo`, or `两者`, then click `启动仿真`. After the simulation
-interfaces are ready, click `运行配送任务`. Stage 1 intentionally has no route
-button and continues to use an RViz Nav2 goal. `停止任务` sends `SIGINT` to the
-ROS 2 Action client, which requests cancellation of an accepted goal without
-closing the simulation. `停止全部` closes every process started by the control
-panel.
+操作顺序：
 
-The selectable floor is checked against the actual floor count of each campus
-building. The UAV cruises horizontally at `15 m`; near the selected facade it
-uses the floor-center altitude `1.6 + (floor - 1) * 3.2 m`. Package mass and
-floor are included in both the preflight energy estimate and the executed UAV
-or cooperative Action goal. The three Action arrays remain index-aligned while
-the execution layer reorders complete cargo records.
+1. 在左侧选择阶段 1 至阶段 6。
+2. 设置货物件数，并为每件货物填写目标、楼层和质量。
+3. 阶段 5、6 分别设置三块初始电量；阶段 6 再选择动态障碍密度。
+4. 选择 `RViz`、`Gazebo` 或 `两者`。
+5. 点击 `启动仿真`，等待 Action 和导航服务就绪。
+6. 点击 `运行配送任务`。
+7. `停止任务` 只取消当前任务；`停止全部` 关闭界面启动的所有进程。
 
-Routes with at most ten items are optimized exactly with Held-Karp dynamic
-programming. Standalone UAV missions minimize distance on the configured air
-corridor graph. UGV-only and cooperative missions minimize the closed tour
-through the required ground stop coordinates. Items sharing one UGV stop are
-kept together, and the cooperative manager launches the next UAV sortie there
-without issuing a redundant UGV navigation goal. The selected route is
-published on `/uav/optimized_route` or
-`/cooperative_delivery/optimized_route` and is also written to the launch log.
+阶段 1 使用 RViz 手动标点，因此没有自动配送路线按钮。界面状态区会实时显示任务
+阶段、三块电池的电量与功率、停靠、安全状态、UGV/UAV 位置、动态障碍数量和
+重规划次数。
 
-For a normal end-to-end test, set the Stage 5 initial battery to `80%`, click
-`启动仿真`, and only then send the task. The battery value is an initial launch
-parameter, so changing it after Gazebo is already running does not reset the
-live battery; restart the simulation to apply the new value. Values below
-`40%` trigger a UI warning, while a value at or below the configured `20%`
-safety reserve is intended mainly for rejection and charging tests.
+UAV 在航路中以 `15 m` 高度巡航，在建筑物正面配送点使用楼层中心高度：
 
-If an Action is accepted but immediately aborts, read the task-status box in
-the control panel. For an energy rejection it reports the three decisive
-values: predicted energy at takeoff, sortie energy, and the mandatory reserve.
-The admission condition is `takeoff energy >= sortie energy + reserve`; the
-UGV does not begin moving when the complete mission cannot satisfy this
-condition.
-
-## Five-Stage Graduation-Design Test Guide
-
-Run the stages in order. Before entering commands in a new terminal, prepare
-the ROS 2 environment with:
-
-```bash
-cd ~/design_final/wqi_final/simulation_ws
-source /opt/ros/humble/setup.bash
-source install/setup.bash
+```text
+delivery_height = 1.6 + (floor - 1) * 3.2 m
 ```
 
-Gazebo and RViz can be enabled together for final screenshots. In VirtualBox,
-use only one 3D viewer at a time if the simulation becomes slow.
+初始电量和障碍密度都是启动参数。Gazebo 已经运行后再修改这些值不会改变当前仿真，
+必须点击 `启动仿真` 重新启动。任一电池低于 `40%` 时界面会警告；UAV 飞行电池
+安全储备为 `20%`，UGV 驱动电池为 `20%`，UGV 充电电池为 `10%`。低于联合任务
+需求时，界面和日志会显示是 UAV 架次、UGV 驱动还是充电预算不足。
 
-| Stage | System under test | Route input |
-|---|---|---|
-| 1 | UGV in room | Manual RViz goal |
-| 2 | UGV on campus | `delivery_task.launch.py` |
-| 3 | UAV on campus | `/uav/execute_delivery` Action |
-| 4 | UGV-UAV cooperation on campus | Cooperative Action, battery held at full start |
-| 5 | Energy-aware UGV-UAV cooperation | Cooperative Action with 30% and 1% battery cases |
+## 6. 六阶段毕业设计测试
 
-### Stage 1: UGV Room Obstacle Avoidance And Navigation
+建议按顺序完成六个阶段。VirtualBox 性能不足时不要同时打开 Gazebo 和 RViz：
 
-This stage validates the original room world, UGV sensors, localization, Nav2
-planning, and local obstacle avoidance. It intentionally uses manual RViz goal
-selection, so no route command is required.
+- 观察导航地图：`gui:=false rviz:=true`
+- 观察 Gazebo 模型和动态障碍：`gui:=true rviz:=false`
+- 仅采集正式数据：`gui:=false rviz:=false`
 
-Terminal 1, open Gazebo and spawn the UGV in the room:
+| 阶段 | 被测系统 | 电量模型 | 动态障碍 | 任务输入 |
+|---|---|---|---|---|
+| 1 | 房间内 UGV 标点导航 | 关闭 | 关闭 | RViz 手动标点 |
+| 2 | 校园内 UGV 自动导航 | 关闭 | 关闭 | `delivery_task.launch.py` |
+| 3 | 校园内 UAV 自动导航 | 关闭 | 关闭 | `/uav/execute_delivery` Action |
+| 4 | 校园空地协同导航 | 关闭 | 关闭 | 协同 Action |
+| 5 | 三电池约束空地协同 | 开启 | 关闭 | 正常电量、低电量拒绝和停靠充电 |
+| 6 | 动态障碍空地协同配送 | 开启 | 四档可选 | 协同 Action 与定量实验 |
+
+### 6.1 阶段一：房间 UGV 避障与导航
+
+终端 1 启动房间 Gazebo 并生成 UGV：
 
 ```bash
 ros2 launch ugvcar_description gazebo_sim.launch.py
 ```
 
-Terminal 2, open Nav2 and RViz with the room map:
+终端 2 启动房间地图、Nav2 和 RViz：
 
 ```bash
 ros2 launch ugvcar_navigation2 navigation2.launch.py
 ```
 
-In RViz, first use `2D Pose Estimate` when localization needs initialization,
-then use `Nav2 Goal` or `2D Goal Pose` to select a free point beyond an
-obstacle. The UGV must plan around the obstacle and reach the selected point
-without touching a wall.
+如果 RViz 尚未初始化定位，先使用 `2D Pose Estimate`；然后使用 `Nav2 Goal` 或
+`2D Goal Pose` 在障碍物另一侧的空闲区域标点。小车应绕开障碍，到达目标且不碰墙。
 
-### Stage 2: UGV Campus Obstacle Avoidance And Navigation
+### 6.2 阶段二：校园 UGV 避障与导航
 
-Terminal 1, open the campus world in Gazebo:
+终端 1 启动校园 Gazebo：
 
 ```bash
 ros2 launch ugvcar_description campus_delivery_sim.launch.py \
   gui:=true visualize_sensor_rays:=false
 ```
 
-Terminal 2, open Nav2 and RViz with the campus map and keepout mask:
+终端 2 启动校园 Nav2、地图、禁行掩膜和 RViz：
 
 ```bash
 ros2 launch ugvcar_navigation2 campus_navigation.launch.py \
   rviz:=true localization_mode:=ground_truth
 ```
 
-On a resource-constrained VirtualBox VM, keep only one 3D viewer active. For
-automated delivery while watching RViz, start Gazebo without its GUI:
+默认使用 Gazebo ground truth 定位，保证 Gazebo 和 RViz 位姿一致。需要单独测试
+AMCL 时使用：
 
 ```bash
-ros2 launch ugvcar_description campus_delivery_sim.launch.py gui:=false
+ros2 launch ugvcar_navigation2 campus_navigation.launch.py \
+  localization_mode:=amcl
 ```
 
-To watch Gazebo instead, start navigation without RViz:
-
-```bash
-ros2 launch ugvcar_navigation2 campus_navigation.launch.py rviz:=false
-```
-
-The campus launch defaults to deterministic Gazebo ground-truth localization so
-Gazebo and RViz share the same pose. To run an AMCL localization experiment
-instead, use:
-
-```bash
-ros2 launch ugvcar_navigation2 campus_navigation.launch.py localization_mode:=amcl
-```
-
-Terminal 3, run the short standard route after Nav2 is active:
+终端 3 在 Nav2 就绪后运行教学楼短路线：
 
 ```bash
 ros2 launch ugvcar_application delivery_task.launch.py \
   delivery_targets:="['teaching_building']"
 ```
 
-For an extended route, send three campus destinations. The task manager chooses
-the next nearest stop, waits at every destination, and returns to the logistics
-center after the final stop:
+运行教学楼、实验楼和二号宿舍多目标路线：
 
 ```bash
 ros2 launch ugvcar_application delivery_task.launch.py \
@@ -252,58 +401,44 @@ ros2 launch ugvcar_application delivery_task.launch.py \
   wait_duration:=10.0
 ```
 
-Available destinations are `cafeteria`, `teaching_building`,
-`innovation_center`, `library`, `laboratory`, `gymnasium`, `dormitory_1`,
-`dormitory_2`, `dormitory_3`, and `dormitory_4`. All four dormitory names use
-the central road intersection at `(30.0, 11.0)` as their shared stop. Both
-local and global costmaps use a `1.0 m` inflation radius. The generated keepout
-mask also reserves a recoverable `1.0 m` low-cost shoulder along each side of
-normal-width roads before the lethal off-road area. The campus roads consist of
-a southern logistics/cafeteria service loop, one main logistics-to-dormitory
-trunk, a separated eastern connector, and one northern campus loop. Every road
-segment belongs to a closed circulation route, and the dormitory stop remains
-at the central junction `(30.0, 11.0)`.
-The UGV uses the validated stable cruise speed of `0.22 m/s`. The regulated
-controller reduces speed automatically near corners and goals. Road keepout is
-enforced by the global costmap; the rolling local costmap can continue steering
-the UGV back to the planned path after a small boundary error. The test passes
-when the UGV stays on the road, avoids occupied cells, reaches every requested
-stop, and returns to the logistics center.
+可用目标：`cafeteria`、`teaching_building`、`innovation_center`、`library`、
+`laboratory`、`gymnasium`、`dormitory_1`、`dormitory_2`、`dormitory_3`、
+`dormitory_4`。四栋宿舍共享道路中心停靠点 `(30.0, 11.0)`。
 
-### Stage 3: UAV Campus Obstacle Avoidance And Navigation
+UGV 直线路段最高巡航速度为 `0.40 m/s`，控制器会在转角、障碍物和终点附近主动
+减速。较长的速度相关前视距离和受限角加速度用于抑制高速下的 S 形摆动。局部代价地图
+膨胀半径为 `0.8 m`，全局代价地图膨胀半径为 `1.0 m`，禁行掩膜在道路边缘保留
+可恢复的低代价缓冲带。验收标准是小车保持在道路内、避开占据区域、到达所有目标并
+返回物流中心。
 
-The UAV launch reuses `campus_delivery.world` but does not spawn or start the
-UGV. A lightweight map server publishes the campus occupancy map for RViz;
-UGV localization, planning, and controller nodes are not started.
+### 6.3 阶段三：校园 UAV 避障与导航
 
-Terminal 1, open the campus world in Gazebo and the UAV view in RViz:
+该启动文件复用校园 world，但不会生成或启动 UGV。
+
+终端 1 启动 UAV、Gazebo 和 RViz：
 
 ```bash
 ros2 launch uav_bringup uav_sim.launch.py \
   gui:=true rviz:=true visualize_sensor_rays:=false \
-  initial_battery_percentage:=1.0
+  enable_energy_constraints:=false
 ```
 
-For better VirtualBox performance, use either headless Gazebo with RViz or
-Gazebo without RViz:
+VirtualBox 推荐二选一：
 
 ```bash
 ros2 launch uav_bringup uav_sim.launch.py gui:=false rviz:=true
 ros2 launch uav_bringup uav_sim.launch.py gui:=true rviz:=false
 ```
 
-Terminal 2, run the standard teaching-building route:
+终端 2 发送教学楼配送任务：
 
 ```bash
-cd ~/design_final/wqi_final/simulation_ws
-source /opt/ros/humble/setup.bash
-source install/setup.bash
 ros2 action send_goal /uav/execute_delivery \
   uav_interfaces/action/ExecuteDelivery \
   "{targets: ['teaching_building'], return_home: true}" --feedback
 ```
 
-An extended obstacle-corridor route can be tested with:
+发送教学楼三层和图书馆五层多目标任务：
 
 ```bash
 ros2 action send_goal /uav/execute_delivery \
@@ -312,57 +447,27 @@ ros2 action send_goal /uav/execute_delivery \
   target_floors: [3,5], payload_masses_kg: [0.30,0.25]}" --feedback
 ```
 
-Available UAV targets are `teaching_building`, `laboratory`, `library`,
-`innovation_center`, `cafeteria`, `gymnasium`, `dormitory_1`, `dormitory_2`,
-`dormitory_3`, and `dormitory_4`. The mission sequence is takeoff, five-second
-hover, climb to the `15 m` cruise altitude, flight along the closed road-center
-air-corridor graph, vertical approach, five-second delivery hover, return, and
-landing. Because several buildings are taller than 15 m, direct
-target-to-target straight lines are not used.
+任务流程为：物理起飞、悬停 5 秒、进入 `15 m` 航路、沿闭合航路图飞行、接近建筑
+正面配送点、下降到指定楼层、悬停配送、返航和物理降落。由于部分建筑高于 15 m，
+规划器不会在建筑物之间直接使用可能穿楼的目标到目标直线。
 
-The main UAV interfaces are:
+主要接口：
 
-- Actions: `/uav/fly_to_pose`, `/uav/execute_delivery`
-- Services: `/uav/takeoff`, `/uav/land`
-- State topics: `/uav/odom`, `/uav/imu`, `/uav/flight_state`, `/uav/mission_status`
-- Battery topics: `/uav/battery_state`, `/uav/battery_percentage`,
-  `/uav/battery_status`, `/uav/battery_power_w`,
-  `/uav/battery_consumed_wh`, `/uav/battery_charged_wh`,
-  `/uav/propulsion_power_w`, `/uav/auxiliary_power_w`,
-  `/uav/payload_mass`, `/uav/remaining_energy`
-- Energy check service: `/uav/check_delivery_energy`
-- Perception topics: `/uav/lidar/points`, `/uav/down_camera/image_raw`,
-  `/uav/range/down`, `/uav/range/front_down`, `/uav/range/rear_down`,
-  `/uav/range/left_down`, `/uav/range/right_down`, `/uav/imu`
-- Safety topics: `/uav/safety/blocked`, `/uav/safety/status`,
-  `/uav/safety/min_distance`, `/uav/safety/ground_clearance`
-- Visualization topics: `/uav/planned_path`, `/uav/path`,
-  `/uav/delivery_points`, `/uav/safety_sphere`, `/uav/optimized_route`
+- Action：`/uav/fly_to_pose`、`/uav/execute_delivery`
+- 服务：`/uav/takeoff`、`/uav/land`、`/uav/check_delivery_energy`
+- 状态：`/uav/odom`、`/uav/imu`、`/uav/flight_state`、`/uav/mission_status`
+- 电量（仅阶段 5、6 启用）：`/uav/battery_state`、`/uav/battery_percentage`、
+  `/uav/battery_power_w`、`/uav/battery_consumed_wh`、
+  `/uav/battery_charged_wh`、`/uav/remaining_energy`
+- 感知：`/uav/lidar/points`、`/uav/down_camera/image_raw`、
+  `/uav/range/down`、`/uav/range/front_down`、`/uav/range/rear_down`、
+  `/uav/range/left_down`、`/uav/range/right_down`
+- 安全：`/uav/safety/blocked`、`/uav/safety/status`、
+  `/uav/safety/min_distance`、`/uav/safety/ground_clearance`
+- 可视化：`/uav/planned_path`、`/uav/path`、`/uav/delivery_points`、
+  `/uav/safety_sphere`、`/uav/optimized_route`
 
-RViz shows the straight node-to-node plan in cyan (`/uav/planned_path`) and
-the physically flown odometry trace in orange (`/uav/path`). The orange trace
-can contain small turn arcs because the force/torque model has inertia; it is
-not the route used by the planner. The RobotModel uses the `uav` RViz TF
-prefix so the model follows the flight trace instead of remaining at the map
-origin.
-
-The UAV uses a configurable `100 Wh` simulated battery. Propulsion power is a
-nonlinear function of horizontal and vertical velocity, acceleration, turning,
-and current package mass; onboard electronics are added separately. Before
-accepting a mission, the manager integrates the complete safe-return route,
-applies a `25%` prediction margin, and preserves a `20%` battery reserve.
-Stage 3 starts at 100% so battery is not an experimental variable; Stage 5
-explicitly validates the battery constraint and UGV charging behavior.
-
-The top lidar publishes `sensor_msgs/msg/PointCloud2` with 240 horizontal by 24
-vertical rays at 10 Hz. Its configured elevation field is `-45 deg` to
-`+89 deg`, so it scans from diagonal-down to almost vertical-up without
-increasing the previous 5760-ray load. Point clouds contain obstacle returns,
-not artificial points in empty sky; Gazebo shows the configured ray field when
-`gui:=true`. RViz also displays the down camera and the green/red safety sphere.
-The simulated IMU includes orientation, gyroscope, and accelerometer data.
-
-Check that all perception streams are active with:
+检查传感器是否发布：
 
 ```bash
 ros2 topic hz /uav/lidar/points
@@ -372,44 +477,25 @@ ros2 topic echo /uav/safety/status
 ros2 topic hz /uav/imu
 ```
 
-When Gazebo is the active viewer, the 3D lidar and short-range ray patterns are
-rendered in blue. Keep only one 3D viewer active in VirtualBox:
+RViz 中青色 `/uav/planned_path` 是节点到节点计划路线，橙色 `/uav/path` 是受惯性
+影响的真实飞行里程计轨迹，因此转弯处可以出现小弧线。验收标准是 UAV 不穿过建筑、
+危险距离前能够悬停或绕行、完成目标后返回物流中心，并以 `LANDED` 和 `CLEAR` 结束。
 
-```bash
-ros2 launch uav_bringup uav_sim.launch.py gui:=true rviz:=false
-```
+### 6.4 阶段四：校园 UGV-UAV 协同配送
 
-The latest targeted library-corridor regression started from the `north_east`
-rendezvous node at `(48, 40)`, completed delivery at the roadway UAV pad at
-`(76, 40)`, returned through the final safety corridor, and landed physically.
-The action returned `success: true`; final UAV odometry was approximately
-`(47.989, 39.992, 0.0)`, with flight state `LANDED` and safety state `CLEAR`. See
-[`docs/uav_subsystem.md`](docs/uav_subsystem.md) for architecture, frames,
-validation evidence, limitations, and third-party licensing details.
+联合启动文件只创建一个 Gazebo，同时启动 UGV、UAV、Nav2、飞控、停靠插件和协同
+任务管理器。该阶段不启动 UAV/UGV 电池节点，也不生成动态障碍，主要验证导航、
+交接和重新停靠，不会因为电量状态缺失而拒绝任务。
 
-The test passes when the UAV takes off physically, follows the planned
-corridors, holds before unsafe 3D sensor clearances, completes every delivery,
-returns to the logistics center, and lands with `LANDED` and `CLEAR` states.
-
-### Stage 4: UGV-UAV Cooperative Campus Navigation
-
-The cooperative launch starts one campus Gazebo world, one UGV, one UAV, Nav2,
-the UAV control stack, the docking plugin, and the high-level mission manager.
-This baseline starts at 100% so the test focuses on navigation, obstacle
-avoidance, vehicle transfer, and docking rather than battery admission.
-
-Terminal 1, open the combined simulation in Gazebo and RViz:
+终端 1 启动联合仿真：
 
 ```bash
 ros2 launch cooperative_delivery cooperative_delivery.launch.py \
   gui:=true rviz:=true visualize_sensor_rays:=false \
-  initial_battery_percentage:=1.0
+  enable_energy_constraints:=false enable_dynamic_obstacles:=false
 ```
 
-For VirtualBox, use `gui:=false rviz:=true` to watch RViz or
-`gui:=true rviz:=false` to watch Gazebo.
-
-Terminal 2, run the complete teaching-building cooperative route:
+终端 2 运行教学楼完整协同任务：
 
 ```bash
 ros2 action send_goal /cooperative_delivery/execute_mission \
@@ -417,7 +503,7 @@ ros2 action send_goal /cooperative_delivery/execute_mission \
   "{targets: ['teaching_building'], return_home: true}" --feedback
 ```
 
-Multiple targets can be handled in one mission:
+运行实验楼、图书馆和四号宿舍多目标任务：
 
 ```bash
 ros2 action send_goal /cooperative_delivery/execute_mission \
@@ -426,142 +512,98 @@ ros2 action send_goal /cooperative_delivery/execute_mission \
   target_floors: [4,5,11], payload_masses_kg: [0.35,0.20,0.25]}" --feedback
 ```
 
-The combined state sequence is:
+协同状态流程：
 
 ```text
 PREPARING -> UGV_TRANSIT -> UGV_SETTLING -> UAV_DETACHING
 -> UAV_DELIVERING -> UAV_DOCKING -> RETURNING_HOME -> COMPLETED
 ```
 
-The public combined interfaces are:
+主要接口：
 
-- Action: `/cooperative_delivery/execute_mission`
-- Status: `/cooperative_delivery/mission_status`
-- Optimized order: `/cooperative_delivery/optimized_route`
-- Docking services: `/uav/attach_uav`, `/uav/detach_uav`
-- Docking state: `/uav/docked`
+- 协同 Action：`/cooperative_delivery/execute_mission`
+- 协同状态：`/cooperative_delivery/mission_status`
+- 优化顺序：`/cooperative_delivery/optimized_route`
+- 停靠服务：`/uav/attach_uav`、`/uav/detach_uav`
+- 停靠状态：`/uav/docked`
 
-The UGV navigation timeout scales with the Nav2 route length to tolerate a
-reduced Gazebo real-time factor in VirtualBox. `/odom` is the UGV controller's
-local accumulated odometry; inspect `/ground_truth/odom` or the `map` TF frame
-when comparing the vehicle with Gazebo.
+验收标准是 UGV 先到达建筑门口的停靠点并稳定，UAV 随后解锁，完成楼层配送后返回
+UGV 并重新锁定，最后 UGV 返回物流中心，任务状态为 `COMPLETED`。
 
-The teaching-building regression completed UGV transport, UAV takeoff,
-delivery, return, platform landing, redocking, and UGV return to the logistics
-center. The action returned `success: true`, `completed_targets: 1`; final
-ground-truth positions were approximately `(-0.053, -43.346)` for the UGV and
-`(-0.053, -43.345, 0.421)` for the docked UAV. See
-[`docs/cooperative_delivery.md`](docs/cooperative_delivery.md) for design and
-validation details.
+### 6.5 阶段五：加入电量约束的空地协同配送
 
-Laboratory, library, and dormitory mappings have also been exercised. The final
-library safety corridor routes around the building at `x=78`, `y=65`, and
-`x=42`; its physical UAV round trip completed with `LANDED` and `CLEAR` states.
-The dormitory combined mission completed UGV transport, UAV delivery, return,
-landing, and redocking with `/uav/docked: true`. The complete final three-target
-sequence remains an experiment to record three times for the thesis results.
+本阶段固定 `enable_dynamic_obstacles:=false`，只验证能量模型、任务准入、空地交接和
+停靠充电，不把动态避障因素混入能耗基准。
 
-The Stage 4 test passes when the UGV reaches the building stop, the UAV
-detaches only after the UGV settles, the UAV completes its aerial route and
-redocks, and the UGV returns to the logistics center with mission state
-`COMPLETED`.
+电量模型以 Zeng 旋翼无人机水平功率模型为基础，使用 Gong 垂直起降模型补充上升和
+下降，并使用 Dai 动态推重比修正加速和转弯功率。模型包含机体、传感器、货物质量
+以及约 `25 W` 的计算机、雷达、相机和通信负载。
 
-### Stage 5: Battery-Constrained UGV-UAV Cooperative Navigation
-
-The following tests verify dock charging, preflight energy admission, flight
-discharge, low-energy rejection, and the complete cooperative route with energy
-as an explicit experimental variable.
-
-The battery model is based on the Zeng rotary-wing horizontal power equation,
-the Gong multi-rotor vertical ascent/descent equation, and the Dai dynamic
-thrust-to-weight correction for acceleration and turns. It uses the simulated
-quadrotor's `1.477 kg` unloaded mass, four `0.12 m` rotors, current package
-mass, and `25 W` of computer/lidar/camera/communication loads.
-
-Package mass is not a linear multiplier. At each time step:
+核心关系：
 
 ```text
 m = m_airframe + m_sensor + m_payload
 P_induced = (1 + k) * (m*g)^(3/2) / sqrt(2*rho*A)
 P_battery = (P_horizontal + P_vertical - P_hover + P_auxiliary)
             / discharge_efficiency
-```
 
-Every route edge uses a trapezoidal speed profile, or a triangular profile when
-the edge is too short to reach maximum speed. The nonlinear power equation is
-sampled every `0.1 s`; delivered package mass is removed before planning the
-next leg:
-
-```text
 E_raw = sum(P_battery(v_j, a_j, payload_j) * dt_j / 3600)
 E_predicted = 1.25 * E_raw
 E_required = E_predicted + battery_capacity * 0.20
-mission accepted only if E_available >= E_required
+仅当 E_available >= E_required 时接受任务
 ```
 
-Before the UGV moves, the cooperative planner checks every UAV sortie in the
-requested sequence. It subtracts predicted sortie energy and conservatively
-adds only the minimum dock charging guaranteed by UGV travel:
+UGV 有两块互不混用的电池：`300 Wh` 驱动电池和 `250 Wh` UAV 充电电池。驱动
+模型按实时里程计积分，质量会在每件货物交给 UAV 后减少，UAV 只有在停靠时才计入
+UGV 总质量：
 
 ```text
-E_takeoff[j] = min(capacity, E_landing[j-1] + E_charge_min[j])
-E_takeoff[j] >= E_sortie[j] + E_reserve
+m_ugv = m_base + m_remaining_cargo + docked * m_uav
+P_drive = P_idle + (Crr*m_ugv*g*v + 0.5*rho*CdA*v^3
+          + max(0, m_ugv*a*v)) / eta_drive
+          + k_v*|v| + k_w*|omega|
+
+E_drive_required = 1.20 * integral(P_drive dt) + 20% drive reserve
+E_charge_source = E_uav_charge / eta_charge + charger_idle_energy
 ```
 
-The complete derivation, aircraft calibration, and timing equations are in
-[`docs/uav_battery.md`](docs/uav_battery.md).
+充电电池保留 `10%` 安全储备，到达储备后 `/ugv/charger_available` 变为 `false`，
+UAV 即使仍停靠也不再充电。任务管理器会在 UGV 开始移动前联合检查完整道路行程、
+逐件变化的货物质量、UAV 每一架次和有限充电电池预算。
 
-First build and source the affected packages:
+#### 6.5.1 验证停靠自动充电
 
-```bash
-cd ~/design_final/wqi_final/simulation_ws
-source /opt/ros/humble/setup.bash
-colcon build --packages-up-to cooperative_delivery uav_bringup
-source install/setup.bash
-```
-
-#### Test 5A: Automatic Charging On The UGV
-
-Terminal 1, open Gazebo and RViz with the UAV at 30%:
+终端 1 以 30% 电量启动联合系统：
 
 ```bash
 ros2 launch cooperative_delivery cooperative_delivery.launch.py \
   gui:=true rviz:=true visualize_sensor_rays:=false \
-  initial_battery_percentage:=0.30
+  enable_energy_constraints:=true enable_dynamic_obstacles:=false \
+  initial_battery_percentage:=0.30 \
+  initial_ugv_drive_battery_percentage:=0.80 \
+  initial_ugv_charging_battery_percentage:=0.80
 ```
 
-For VirtualBox, change this to `gui:=false rviz:=true` when both 3D viewers are
-too slow.
-
-In a second sourced terminal, inspect the charging state:
+终端 2 检查停靠和充电：
 
 ```bash
-cd ~/design_final/wqi_final/simulation_ws
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
 ros2 topic echo /uav/docked --once
 ros2 topic echo /uav/battery_status
-```
-
-`/uav/docked` must report `true`. The status must report `CHARGING`, and the
-percentage must increase with simulation time. The default net charging power
-is approximately `-157 W`; negative battery power means energy is entering the
-battery. Additional values can be inspected with:
-
-```bash
 ros2 topic echo /uav/battery_percentage
 ros2 topic echo /uav/battery_power_w
 ros2 topic echo /uav/battery_charged_wh
-ros2 topic echo /uav/payload_mass
-ros2 topic echo /uav/total_mass_kg
-ros2 topic echo /uav/propulsion_power_w
-ros2 topic echo /uav/auxiliary_power_w
+ros2 topic echo /ugv/drive_battery_state
+ros2 topic echo /ugv/charging_battery_state
+ros2 topic echo /ugv/drive_power_w
+ros2 topic echo /ugv/total_carried_mass_kg
 ```
 
-#### Test 5B: Preflight Energy Budget And Normal Route
+`/uav/docked` 应为 `true`，状态应为 `CHARGING`，电量百分比应随仿真时间增加。默认
+净充电功率约为 `-157 W`，负功率表示能量流入 UAV 电池。
 
-Query the teaching-building UAV sortie without starting it:
+#### 6.5.2 起飞前能量预算和正常任务
+
+查询教学楼三层任务是否满足安全返航条件：
 
 ```bash
 ros2 service call /uav/check_delivery_energy \
@@ -571,11 +613,8 @@ ros2 service call /uav/check_delivery_energy \
   payload_masses_kg: [0.30], target_floors: [3]}"
 ```
 
-With sufficient energy, the response must contain `feasible: true` together
-with propulsion energy, auxiliary energy, payload penalty, reserve, required
-energy, and predicted final state of charge.
-
-Run the complete cooperative delivery:
+电量充足时响应应包含 `feasible: true`，并给出推进能量、辅助设备能量、载荷惩罚、
+安全储备、总需求和预计任务结束 SOC。随后发送协同任务：
 
 ```bash
 ros2 action send_goal /cooperative_delivery/execute_mission \
@@ -583,29 +622,22 @@ ros2 action send_goal /cooperative_delivery/execute_mission \
   "{targets: ['teaching_building'], return_home: true}" --feedback
 ```
 
-Charging continues while the UAV is carried by the UGV. After release, battery
-status changes through takeoff, hover, cruise, and landing discharge modes.
-After redocking it must return to `CHARGING`. Inspect the energy records with:
+飞行期间应经过起飞、悬停、巡航和降落耗电状态；重新停靠后必须恢复 `CHARGING`。
 
-```bash
-ros2 topic echo /uav/battery_consumed_wh
-ros2 topic echo /uav/battery_charged_wh
-ros2 topic echo /uav/energy_preflight --once
-ros2 topic echo /cooperative_delivery/energy_plan --once
-```
+#### 6.5.3 验证低电量拒绝
 
-#### Test 5C: Low-Energy Cooperative Mission Rejection
-
-Stop the previous launch with `Ctrl+C`, then start the combined system at 1%:
+停止之前的仿真，将 UGV 驱动电池设为 `10%`，验证任务在车辆移动前被拒绝：
 
 ```bash
 ros2 launch cooperative_delivery cooperative_delivery.launch.py \
   gui:=true rviz:=true visualize_sensor_rays:=false \
-  initial_battery_percentage:=0.01
+  enable_energy_constraints:=true enable_dynamic_obstacles:=false \
+  initial_battery_percentage:=0.80 \
+  initial_ugv_drive_battery_percentage:=0.10 \
+  initial_ugv_charging_battery_percentage:=0.80
 ```
 
-As soon as the cooperative action server is ready, submit the route in another
-sourced terminal:
+发送教学楼协同任务：
 
 ```bash
 ros2 action send_goal /cooperative_delivery/execute_mission \
@@ -613,14 +645,207 @@ ros2 action send_goal /cooperative_delivery/execute_mission \
   "{targets: ['teaching_building'], return_home: true}" --feedback
 ```
 
-The result must report `success: false` with a UAV battery-plan rejection.
-The UGV must not start its route, and the UAV must remain docked and continue
-charging. The planner accounts for guaranteed charging during UGV transit, so
-`10%` may legitimately be accepted for a long ground leg. Submit the same goal
-again only after `/uav/battery_percentage` exceeds the reported sequence
-threshold; it must then be accepted.
+结果应为 `success: false`，原因包含 `UGV drive energy REJECT`。UGV 不应开始移动，
+UAV 应保持停靠。也可以分别把 UAV 电池设为 `0.01`、UGV 充电电池设为 `0.10`，
+验证有限充电预算不足；如果 UGV 行驶期间能够在安全储备之上充入足够能量，低 UAV
+初始电量任务仍可能合法通过，这不属于错误。
 
-#### Test 5D: Automated Regression Tests
+主要 UGV 电量接口：
+
+- `/ugv/drive_battery_state`、`/ugv/drive_remaining_wh`、`/ugv/drive_consumed_wh`
+- `/ugv/charging_battery_state`、`/ugv/charging_remaining_wh`、
+  `/ugv/charging_consumed_wh`
+- `/ugv/drive_power_w`、`/ugv/charging_source_power_w`、
+  `/ugv/uav_charging_output_power_w`
+- `/ugv/cargo_mass_kg`、`/ugv/total_carried_mass_kg`、`/ugv/charger_available`
+
+### 6.6 阶段六：动态障碍、电量约束与空地协同配送
+
+阶段六在阶段五全部能量约束基础上启动带碰撞体的动态障碍，作为最终完整系统。使用
+UI 时只需选择左侧第六阶段，并在 `动态障碍密度` 下拉框选择四档之一。使用命令行时，
+下面的联合启动文件会自行启动障碍生成器，不要再手动运行第二个生成器：
+
+```bash
+ros2 launch cooperative_delivery cooperative_delivery.launch.py \
+  gui:=true rviz:=false visualize_sensor_rays:=false \
+  enable_energy_constraints:=true enable_dynamic_obstacles:=true \
+  obstacle_density:=medium random_seed:=42 \
+  initial_battery_percentage:=0.80 \
+  initial_ugv_drive_battery_percentage:=0.80 \
+  initial_ugv_charging_battery_percentage:=0.80
+```
+
+将 `obstacle_density:=medium` 分别改成以下值即可打开四种密度：
+
+```text
+none    无动态障碍，0 个
+low     低密度，3 个
+medium  中密度，6 个
+high    高密度，10 个
+```
+
+发送多目标、不同楼层和不同载荷任务：
+
+```bash
+ros2 action send_goal /cooperative_delivery/execute_mission \
+  cooperative_delivery_interfaces/action/ExecuteCooperativeDelivery \
+  "{targets: ['teaching_building','library','dormitory_4'], \
+  return_home: true, target_floors: [3,5,11], \
+  payload_masses_kg: [0.30,0.20,0.25]}" --feedback
+```
+
+验收时依次运行 `none`、`low`、`medium`、`high`，每档至少 3 次并固定随机种子集合。
+记录成功率、总时间、UGV/UAV 路径长度、三类能耗、最小净空、Nav2 恢复次数、UAV
+重规划次数、安全悬停时间、UGV/UAV 碰撞事件数和真实动态避障成功率。阶段六是
+论文最终系统结果，阶段一至五用于消融和单模块对照。
+
+阶段六的障碍物是非合作对象：它们保持固定路线和速度，不负责避让机器人。UGV
+由 360 度激光动态轨迹预测、D* Lite 增量全局规划和预测式 DWB 局部轨迹评价共同
+完成道路内绕行；UAV 由顶部 3D 雷达、平滑三维路径重规划和前视点跟随完成绕障。
+两者均不执行固定倒车距离、固定转向角度或固定绕点，因此实验中的避障结果来自
+无人车和无人机自身的实时规划，而不是障碍物主动让路。算法理论、公式和与论文原型
+的差异见 `docs/paper_based_dynamic_navigation.md`。
+
+UGV 的预测占用使用激光扫描时刻对应的 Gazebo 地图位姿，不再把延迟扫描与最新位姿
+混用；目标关联同时检查速度、位移、运动方向、拟合误差和轮廓尺寸。节点同时计算 UGV
+地图坐标速度、障碍物速度、相对闭合速度、最近会遇时间和最近会遇距离。差速车不能
+横向平移，因此先按等效横向加速度计算完成安全换道所需时间，再计算安全避让距离：
+
+```text
+D_lateral = R_ugv + R_obstacle + safety_margin
+T_maneuver = 2 * sqrt(D_lateral / lateral_maneuver_acceleration)
+D_safe = R_ugv + R_obstacle + safety_margin
+         + closing_speed * (response_time + T_maneuver)
+         + UGV_speed^2 / (2 * braking_deceleration)
+```
+
+默认参数为安全余量 `0.30 m`、系统响应时间 `5.00 s`、制动减速度 `0.60 m/s^2`，
+等效横向机动加速度 `0.50 m/s^2`，并增加 `1.50 m` 规划触发缓冲。障碍物速度越高、
+相对接近越快，避让触发距离越大。只有预计 `15 s` 内最近会遇距离小于安全轮廓，并且
+当前距离进入安全距离加规划缓冲时，才在预计会遇点发布风险占用。每个风险由碰撞中心
+和障碍物来向一侧的短保护点组成，使全局规划器选择相反方向绕行；不会把障碍物整条未来
+路线提前铺进代价地图。近场保护范围为 `6.00 m`，保护点按 `0.75 m` 间隔延伸，
+绕行侧偏移为 `1.60 m`。一次碰撞事件首次确认后，会锁定绕行侧、地图坐标会遇点及其
+保护点，后续即使
+同一物体被重新关联为不同跟踪 ID，也共用这一组固定锚点；只有风险连续清除后才允许
+建立新锚点。这避免保护点随 UGV 向前移动，以及黄色路线左右切换。
+预测风险只写入全局代价地图，用于提前改变路线；局部代价地图只接收真实 `/scan`，
+避免控制器在虚拟风险点前停车后被斜后方障碍追撞。风险连续消失 `5` 帧后才清理，
+避免绕行路径反复切换。机器人周围 `1.20 m` 不写入风险点，由原始 `/scan` 负责
+近场碰撞检查。该方法同时识别前方迎面、侧向横穿和斜后方追赶障碍。UAV 使用最近
+障碍表面点簇的中值向量，并连续确认目标切换，输出统一位于 `uav/base_link`
+坐标系。
+
+阶段六还设置了两级道路边缘恢复：D* Lite 在起点落入边界栅格时，可在 `0.60 m`
+内选择最近可行栅格并输出返回道路的短路径；动态道路掩码在铺装边缘外保留 `0.30 m`
+软代价恢复带。该恢复带只用于纠正动态会车后的单栅格越界，更外侧仍为致命禁行区，
+阶段一至五地图不受影响。
+
+独立 Gazebo 回归使用一条可复现的“斜后方追赶后反向迎面”路线：动态障碍速度
+`0.70 m/s`，UGV 最高速度 `0.40 m/s`。任务 Action 成功，物理接触次数为 0，最小
+中心距 `1.523 m`，扣除两者碰撞包络后的最小表面净距 `0.953 m`，最小规划安全
+净距 `0.173 m`；移动段平均速度 `0.323 m/s`，黄色路径改变 12 次，横向方向反转
+次数为 0。另从餐厅停靠点回归物流中心的约 `60.8 m` 路线耗时 `195.9 s`，Nav2
+恢复次数为 0，终点误差约 `0.25 m`。
+
+最终完整协同回归使用食堂二层、`0.25 kg` 载荷和自动返程任务。结果为
+`SUCCEEDED`：UGV 总路径 `122.44 m`，墙钟时间 `998.0 s`，平均/最大速度
+`0.329/0.409 m/s`；动态障碍接触 0，最小中心距/表面净距
+`1.387/0.817 m`，最大倾角 `0.01 deg`。UGV 到食堂误差 `0.272 m` 后正确停止并
+释放 UAV，UAV 完成配送和重新停靠，UGV 最终到达 `(-0.07, -43.23) m`。黄色路径
+变化 25 次，D* Lite 28 次规划中有 16 次复用已有搜索状态。当前全工作空间测试为
+`352 tests, 0 errors, 0 failures, 16 skipped`。这些是定向整程回归证据，完整四密度
+统计仍应通过第 7 节实验矩阵生成，不能用单次结果替代论文统计。
+
+运行阶段六时可在另一终端检查跟踪稳定性：
+
+```bash
+ros2 topic echo /ugv/dynamic_replanning/status
+ros2 topic echo /ugv/dynamic_replanning/tracked_obstacles
+ros2 topic echo /ugv/dstar_lite/status
+ros2 topic echo /ugv/predictive_dwa/status
+ros2 topic echo /uav/safety/nearest_obstacle
+```
+
+`/ugv/dynamic_replanning/status` 中的 `pose_gap` 应小于 `0.12 s`。动态障碍进入
+雷达范围并形成稳定轨迹后，`stable_dynamic_tracks` 应大于 0；确认碰撞风险后，
+`active_threats` 和 `risk_points` 应大于 0，并显示 `zone`、`obstacle_speed`、
+`closing_speed`、`safe_distance`、`maneuver_time`、`avoidance_side`、`ttc`
+和 `closest`。`zone` 可以是 `front`、`front_left`、`front_right`、`rear`、
+`rear_left` 或 `rear_right`，`avoidance_side` 是规划器应选择的左右绕行方向。
+风险解除后应恢复 `zone=clear`。UAV 最近障碍消息的 `frame_id` 应为
+`uav/base_link`。
+
+## 7. 自动化定量实验
+
+评测器会启动真实仿真、发送真实 ROS 2 Action、采集数据并关闭该批次。每个结果目录
+包含：
+
+- `runs.json`：完整原始数据。
+- `runs.csv`：论文表格输入。
+- `summary.md`：任务成功率、真实动态避障成功率、效率、误差、能耗和碰撞汇总。
+- `success_rate.png`、`avoidance_success_rate.png`、`phase_duration.png`、
+  `energy_comparison.png`、`ugv_path_length.png`、`uav_path_length.png`：
+  自动生成图表。
+
+运行中密度教学楼协同任务三次：
+
+```bash
+ros2 launch delivery_evaluation experiment.launch.py \
+  mode:=cooperative scenario:=teaching_building \
+  obstacle_density:=medium repetitions:=3 random_seed:=42 \
+  results_dir:=$PWD/experiment_results gui:=false rviz:=false
+```
+
+可用模式：
+
+- `ugv_only`：仅 UGV。
+- `uav_only`：仅 UAV。
+- `cooperative`：UGV-UAV 协同。
+
+运行论文完整对照矩阵：
+
+```bash
+ros2 run delivery_evaluation experiment_matrix \
+  --modes ugv_only,uav_only,cooperative \
+  --densities none,low,medium,high \
+  --seeds 42,43,44 \
+  --scenario teaching_building --repetitions 1 \
+  --initial-battery 0.80 \
+  --initial-ugv-drive-battery 0.80 \
+  --initial-ugv-charging-battery 0.80 \
+  --results-dir "$PWD/experiment_results" \
+  --continue-on-failure
+```
+
+该命令执行 `3 种模式 × 4 种障碍密度 × 3 个随机种子 = 36 次` 单目标实验。正式
+运行前可先检查所有生成命令：
+
+```bash
+ros2 run delivery_evaluation experiment_matrix \
+  --modes ugv_only,uav_only,cooperative \
+  --densities none,medium --seeds 42 --dry-run
+```
+
+指标定义、控制变量和论文统计方法见
+[`docs/evaluation_method.md`](docs/evaluation_method.md)。
+任务书逐项完成状态和必须收尾顺序见
+[`docs/completion_checklist.md`](docs/completion_checklist.md)。
+
+## 8. 地图重新生成
+
+修改校园布局后，在工作空间根目录执行：
+
+```bash
+python3 src/ugvcar_description/scripts/generate_campus_delivery.py
+colcon build
+source install/setup.bash
+```
+
+该脚本会重新生成 Gazebo world、占据地图和 Nav2 禁行掩膜。不要直接修改
+`build/`、`install/` 或 `log/` 中的生成文件。
+
+## 9. 编译与自动测试
 
 ```bash
 cd ~/design_final/wqi_final/simulation_ws
@@ -631,38 +856,31 @@ colcon test --event-handlers console_cohesion+
 colcon test-result --verbose
 ```
 
-The clean `v1.0.0` baseline contains 13 thesis packages. On 2026-07-20 a
-build from empty build/install directories completed for all 13 packages, and
-the full-workspace test run reported `143 tests, 0 errors, 0 failures,
-0 skipped`. Functional, route-planning, copyright, lint, launch, and interface
-tests all passed. Both UGV and UAV Xacro models passed `check_urdf`,
-and the campus generator reproduced 11 buildings, 4 closed road groups, and
-the occupancy/keepout maps. See
-[`docs/evaluation_report.md`](docs/evaluation_report.md) for the exact evidence
-and remaining formal experiment work.
-
-## Map Regeneration
-
-Regenerate the campus world, occupancy map, and keepout mask after editing the
-layout:
-
-```bash
-python3 src/ugvcar_description/scripts/generate_campus_delivery.py
-colcon build
-```
-
-## Next Graduation-Design Work
-
-The control baseline is frozen. Remaining work is formal experiment coverage
-and thesis evidence rather than another vehicle-control rewrite. The exact
-experiment matrix and acceptance criteria are in
-[`docs/next_stage_task_spec.md`](docs/next_stage_task_spec.md):
+2026-08-09 的当前开发基线结果：
 
 ```text
-repeat representative missions at least three times
-record mission duration, path length, endpoint error, and success rate
-compare UGV-only, UAV-only, and cooperative delivery results
-use the simulated UAV battery traces in the comparison
-calibrate the paper-model parameters and report prediction error
-compare loaded and unloaded UAV sorties
+16 packages finished
+352 tests, 0 errors, 0 failures, 16 skipped
 ```
+
+UGV 和 UAV Xacro 均通过 `check_urdf`；校园生成器能够重建 11 栋建筑、4 组闭合
+道路、占据地图和禁行掩膜。详细运行证据见
+[`docs/evaluation_report.md`](docs/evaluation_report.md)。
+
+## 10. 当前限制与后续论文工作
+
+软件主体、协同闭环、动态障碍和自动评测工具已经完成。论文提交前仍需：
+
+1. 在冻结的 Git 提交上运行完整 36 次实验矩阵。
+2. 保留所有 `runs.json`、`runs.csv`、汇总报告和图表。
+3. 计算各组均值、样本标准差、失败原因和实时因子。
+4. 对比 UGV、UAV 和协同模式的配送时间、路径长度、总能耗及单目标能耗。
+5. 对比空载/有载、正常电量/低电量拒绝，以及不同障碍密度。
+6. 使用论文参数或参考工况标定预测能耗与仿真实际积分能耗，并报告相对误差。
+
+当前 UAV 使用 Gazebo ground truth 定位；已经实现航路边重规划和局部三维避障，但
+没有实现未知环境中的在线三维 SLAM 或三维全局占据地图。论文中应如实说明这一边界，
+不能用单次冒烟测试代替完整实验矩阵。UGV 是会在园区道路间移动的能源与货物基地，
+但当前安全策略要求 UGV 到达固定会合点并停止后，UAV 才起飞或降落；尚未实现 UGV
+行驶过程中的动态追踪降落。若任务书把“移动基地”严格解释为“车辆运动中着陆”，
+该功能仍属于后续研究内容。

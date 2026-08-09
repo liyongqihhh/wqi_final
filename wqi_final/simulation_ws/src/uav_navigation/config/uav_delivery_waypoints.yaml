@@ -16,6 +16,10 @@ flight:
   maximum_obstacle_height: 41.7
   safety_margin: 2.0
   obstacle_avoidance_mode: road_corridor_with_3d_safety_sphere
+  maximum_route_replans: 3
+  local_replan_clearance: 3.0
+  local_replan_minimum_altitude: 0.8
+  local_replan_maximum_altitude: 20.0
 
 # Most XY coordinates match the UGV building-door stops. The four dormitory
 # targets align with each building's front-door centre while sharing one UGV

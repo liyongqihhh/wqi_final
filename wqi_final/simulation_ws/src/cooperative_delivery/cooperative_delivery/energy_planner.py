@@ -8,6 +8,7 @@ class EnergySortie:
     launch_x: float
     launch_y: float
     mission_energy_wh: float
+    ugv_distance_m: float | None = None
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,7 @@ class EnergyPlanStep:
     target_name: str
     ugv_distance_m: float
     minimum_charge_wh: float
+    charging_source_energy_wh: float
     takeoff_energy_wh: float
     mission_energy_wh: float
     landing_energy_wh: float
@@ -25,6 +27,7 @@ class CooperativeEnergyPlan:
     feasible: bool
     steps: tuple[EnergyPlanStep, ...]
     final_energy_wh: float
+    remaining_charger_energy_wh: float
     message: str
 
 
@@ -37,6 +40,8 @@ def plan_cooperative_energy(
     initial_x: float,
     initial_y: float,
     sorties: list[EnergySortie],
+    charger_available_energy_wh: float = math.inf,
+    charger_transfer_efficiency: float = 1.0,
 ) -> CooperativeEnergyPlan:
     values = (
         initial_energy_wh,
@@ -59,8 +64,19 @@ def plan_cooperative_energy(
         raise ValueError("Energy and charging values cannot be negative")
     if not sorties:
         raise ValueError("At least one UAV sortie is required")
+    if (
+        math.isnan(charger_available_energy_wh)
+        or charger_available_energy_wh < 0.0
+    ):
+        raise ValueError("Available charger energy must be non-negative")
+    if (
+        not math.isfinite(charger_transfer_efficiency)
+        or not 0.0 < charger_transfer_efficiency <= 1.0
+    ):
+        raise ValueError("Charger transfer efficiency must be in (0, 1]")
 
     energy = min(initial_energy_wh, battery_capacity_wh)
+    charger_energy = float(charger_available_energy_wh)
     previous_x = initial_x
     previous_y = initial_y
     steps = []
@@ -74,15 +90,31 @@ def plan_cooperative_energy(
             raise ValueError("Sortie planning values must be finite")
         if sortie.mission_energy_wh < 0.0:
             raise ValueError("Sortie mission energy cannot be negative")
-        ugv_distance = math.hypot(
-            sortie.launch_x - previous_x,
-            sortie.launch_y - previous_y,
+        ugv_distance = (
+            math.hypot(
+                sortie.launch_x - previous_x,
+                sortie.launch_y - previous_y,
+            )
+            if sortie.ugv_distance_m is None
+            else float(sortie.ugv_distance_m)
         )
+        if not math.isfinite(ugv_distance) or ugv_distance < 0.0:
+            raise ValueError("UGV route distance must be finite and non-negative")
         minimum_transit_seconds = ugv_distance / ugv_planning_speed_mps
-        minimum_charge = (
+        potential_charge = (
             net_charge_power_w * minimum_transit_seconds / 3600.0
         )
-        energy = min(battery_capacity_wh, energy + minimum_charge)
+        available_output = charger_energy * charger_transfer_efficiency
+        minimum_charge = min(
+            potential_charge,
+            available_output,
+            max(0.0, battery_capacity_wh - energy),
+        )
+        charging_source_energy = (
+            minimum_charge / charger_transfer_efficiency
+        )
+        charger_energy -= charging_source_energy
+        energy += minimum_charge
         required = sortie.mission_energy_wh + reserve_energy_wh
         if energy + 1e-9 < required:
             message = (
@@ -94,6 +126,7 @@ def plan_cooperative_energy(
                 feasible=False,
                 steps=tuple(steps),
                 final_energy_wh=energy,
+                remaining_charger_energy_wh=charger_energy,
                 message=message,
             )
         landing_energy = energy - sortie.mission_energy_wh
@@ -101,6 +134,7 @@ def plan_cooperative_energy(
             target_name=sortie.target_name,
             ugv_distance_m=ugv_distance,
             minimum_charge_wh=minimum_charge,
+            charging_source_energy_wh=charging_source_energy,
             takeoff_energy_wh=energy,
             mission_energy_wh=sortie.mission_energy_wh,
             landing_energy_wh=landing_energy,
@@ -118,5 +152,6 @@ def plan_cooperative_energy(
         feasible=True,
         steps=tuple(steps),
         final_energy_wh=energy,
+        remaining_charger_energy_wh=charger_energy,
         message=f"PASS energy-aware sequence: {summary}",
     )

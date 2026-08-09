@@ -8,6 +8,8 @@ DEFAULT_WORKSPACE = Path("/home/wqi/design_final/wqi_final/simulation_ws")
 UAV_BATTERY_RESERVE_PERCENT = 20
 UAV_LOW_ENERGY_WARNING_PERCENT = 40
 UAV_RECOMMENDED_TEST_PERCENT = 80
+UGV_DRIVE_BATTERY_RESERVE_PERCENT = 20
+UGV_CHARGING_BATTERY_RESERVE_PERCENT = 10
 MAX_DELIVERY_ITEMS = 10
 MAX_UAV_PAYLOAD_KG = 1.0
 
@@ -49,6 +51,24 @@ class DeliveryItem:
     payload_kg: float
 
 
+@dataclass(frozen=True)
+class ObstacleDensity:
+    key: str
+    label: str
+    obstacle_count: int
+
+
+OBSTACLE_DENSITIES = (
+    ObstacleDensity("none", "无动态障碍（0）", 0),
+    ObstacleDensity("low", "低密度（3）", 3),
+    ObstacleDensity("medium", "中密度（6）", 6),
+    ObstacleDensity("high", "高密度（10）", 10),
+)
+OBSTACLE_DENSITY_BY_KEY = {
+    density.key: density for density in OBSTACLE_DENSITIES
+}
+
+
 BUILDINGS = (
     Building("teaching_building", "教学楼", 8, 3, 0.30),
     Building("laboratory", "实验楼", 9, 4, 0.35),
@@ -73,53 +93,76 @@ class SimulationMode:
     supports_payload: bool
     supports_battery_input: bool
     has_route_command: bool
+    uses_energy_model: bool
+    supports_dynamic_obstacles: bool
 
 
 SIMULATION_MODES = (
     SimulationMode(
-        "indoor_ugv",
-        "1  UGV 房间导航",
-        False,
-        False,
-        False,
-        False,
-        False,
+        key="indoor_ugv",
+        label="1  室内 UGV 标点导航",
+        uses_uav=False,
+        supports_floor=False,
+        supports_payload=False,
+        supports_battery_input=False,
+        has_route_command=False,
+        uses_energy_model=False,
+        supports_dynamic_obstacles=False,
     ),
     SimulationMode(
-        "campus_ugv",
-        "2  UGV 校园导航",
-        False,
-        False,
-        False,
-        False,
-        True,
+        key="campus_ugv",
+        label="2  校园 UGV 自动导航",
+        uses_uav=False,
+        supports_floor=False,
+        supports_payload=False,
+        supports_battery_input=False,
+        has_route_command=True,
+        uses_energy_model=False,
+        supports_dynamic_obstacles=False,
     ),
     SimulationMode(
-        "campus_uav",
-        "3  UAV 校园配送",
-        True,
-        True,
-        True,
-        True,
-        True,
+        key="campus_uav",
+        label="3  校园 UAV 自动导航",
+        uses_uav=True,
+        supports_floor=True,
+        supports_payload=True,
+        supports_battery_input=False,
+        has_route_command=True,
+        uses_energy_model=False,
+        supports_dynamic_obstacles=False,
     ),
     SimulationMode(
-        "cooperative",
-        "4  UGV-UAV 协同",
-        True,
-        True,
-        True,
-        False,
-        True,
+        key="cooperative",
+        label="4  空地协同自动导航",
+        uses_uav=True,
+        supports_floor=True,
+        supports_payload=True,
+        supports_battery_input=False,
+        has_route_command=True,
+        uses_energy_model=False,
+        supports_dynamic_obstacles=False,
     ),
     SimulationMode(
-        "cooperative_energy",
-        "5  电量约束协同",
-        True,
-        True,
-        True,
-        True,
-        True,
+        key="cooperative_energy",
+        label="5  空地协同与三电池",
+        uses_uav=True,
+        supports_floor=True,
+        supports_payload=True,
+        supports_battery_input=True,
+        has_route_command=True,
+        uses_energy_model=True,
+        supports_dynamic_obstacles=False,
+    ),
+    SimulationMode(
+        key="cooperative_dynamic_energy",
+        label="6  动态障碍协同配送",
+        uses_uav=True,
+        supports_floor=True,
+        supports_payload=True,
+        supports_battery_input=True,
+        has_route_command=True,
+        uses_energy_model=True,
+        supports_dynamic_obstacles=True,
     ),
 )
 MODE_BY_KEY = {mode.key: mode for mode in SIMULATION_MODES}
@@ -128,39 +171,51 @@ MODE_BY_KEY = {mode.key: mode for mode in SIMULATION_MODES}
 def battery_admission_notice(
     mode_key: str,
     battery_percent: int,
+    ugv_drive_battery_percent: int = UAV_RECOMMENDED_TEST_PERCENT,
+    ugv_charging_battery_percent: int = UAV_RECOMMENDED_TEST_PERCENT,
 ) -> BatteryNotice:
     """Return UI guidance without replacing the runtime energy planner."""
     mode = MODE_BY_KEY[mode_key]
     percentage = int(battery_percent)
+    drive_percentage = int(ugv_drive_battery_percent)
+    charging_percentage = int(ugv_charging_battery_percent)
     if not mode.supports_battery_input:
         return BatteryNotice("normal", "")
+    critical = []
     if percentage <= UAV_BATTERY_RESERVE_PERCENT:
-        if mode_key == "cooperative_energy":
-            detail = (
-                "只有 UGV 行驶期间充入足够能量后，协同任务才可能通过"
-                "起飞准入检查"
-            )
-        else:
-            detail = "独立 UAV 配送会被起飞准入检查拒绝"
+        critical.append(f"UAV {percentage}%")
+    if drive_percentage <= UGV_DRIVE_BATTERY_RESERVE_PERCENT:
+        critical.append(f"UGV 驱动电池 {drive_percentage}%")
+    if charging_percentage <= UGV_CHARGING_BATTERY_RESERVE_PERCENT:
+        critical.append(f"UGV 充电电池 {charging_percentage}%")
+    if critical:
         return BatteryNotice(
             "critical",
-            f"当前初始电量 {percentage}%，不高于 "
-            f"{UAV_BATTERY_RESERVE_PERCENT}% 安全储备；{detail}。"
-            f"正常流程建议使用 {UAV_RECOMMENDED_TEST_PERCENT}%。",
+            "以下电池不高于安全储备：" + "、".join(critical) + "。"
+            "任务会由 UAV 架次规划器和 UGV 驱动规划器联合判断；"
+            f"完整流程建议三块电池均使用 {UAV_RECOMMENDED_TEST_PERCENT}%。",
             True,
         )
+    low = []
     if percentage < UAV_LOW_ENERGY_WARNING_PERCENT:
+        low.append(f"UAV {percentage}%")
+    if drive_percentage < UAV_LOW_ENERGY_WARNING_PERCENT:
+        low.append(f"UGV 驱动电池 {drive_percentage}%")
+    if charging_percentage < UAV_LOW_ENERGY_WARNING_PERCENT:
+        low.append(f"UGV 充电电池 {charging_percentage}%")
+    if low:
         return BatteryNotice(
             "warning",
-            f"当前初始电量 {percentage}% 接近能量门槛。高楼层、远距离或"
-            "较重载荷仍可能因“任务能耗 + 20% 安全储备”不足而被拒绝；"
+            "以下电池电量较低：" + "、".join(low) + "。高楼层、远距离、"
+            "重载荷或多任务可能因任务能耗与安全储备不足而被拒绝；"
             f"首次完整测试建议使用 {UAV_RECOMMENDED_TEST_PERCENT}%。",
             True,
         )
     return BatteryNotice(
         "normal",
-        f"当前初始电量 {percentage}%；发送后仍会按路线、楼层、载荷和"
-        "安全储备执行实际能量准入检查。",
+        f"初始电量：UAV {percentage}%，UGV 驱动 {drive_percentage}%，"
+        f"UGV 充电 {charging_percentage}%。发送后会按路线、楼层、载荷"
+        "和安全储备执行联合能量准入检查。",
     )
 
 
@@ -191,14 +246,25 @@ class CommandBuilder:
         viewer: ViewerMode,
         battery_percent: int,
         visualize_sensor_rays: bool,
+        ugv_drive_battery_percent: int = UAV_RECOMMENDED_TEST_PERCENT,
+        ugv_charging_battery_percent: int = UAV_RECOMMENDED_TEST_PERCENT,
+        obstacle_density: str = "none",
     ) -> list[CommandSpec]:
         if mode_key not in MODE_BY_KEY:
             raise ValueError(f"Unknown simulation mode: {mode_key}")
         if not 0 <= int(battery_percent) <= 100:
             raise ValueError("Battery percentage must be in the range 0..100")
+        if not 0 <= int(ugv_drive_battery_percent) <= 100:
+            raise ValueError("UGV drive battery must be in the range 0..100")
+        if not 0 <= int(ugv_charging_battery_percent) <= 100:
+            raise ValueError("UGV charging battery must be in the range 0..100")
+        if obstacle_density not in OBSTACLE_DENSITY_BY_KEY:
+            raise ValueError(f"Unknown obstacle density: {obstacle_density}")
         gui, rviz = self._flags(viewer)
         rays = str(bool(visualize_sensor_rays)).lower()
         soc = int(battery_percent) / 100.0
+        drive_soc = int(ugv_drive_battery_percent) / 100.0
+        charging_soc = int(ugv_charging_battery_percent) / 100.0
 
         if mode_key == "indoor_ugv":
             return [
@@ -235,17 +301,32 @@ class CommandBuilder:
                 "校园 UAV 仿真",
                 "ros2 launch uav_bringup uav_sim.launch.py "
                 f"gui:={gui} rviz:={rviz} "
-                f"initial_battery_percentage:={soc:.2f} "
+                "enable_energy_constraints:=false "
+                "initial_battery_percentage:=1.00 "
                 f"visualize_sensor_rays:={rays}",
             )]
 
-        cooperative_soc = 1.0 if mode_key == "cooperative" else soc
+        energy_enabled = mode_key in (
+            "cooperative_energy",
+            "cooperative_dynamic_energy",
+        )
+        dynamic_enabled = mode_key == "cooperative_dynamic_energy"
+        cooperative_soc = soc if energy_enabled else 1.0
+        cooperative_drive_soc = drive_soc if energy_enabled else 1.0
+        cooperative_charging_soc = charging_soc if energy_enabled else 1.0
         return [CommandSpec(
             "校园协同仿真",
             "ros2 launch cooperative_delivery "
             "cooperative_delivery.launch.py "
             f"gui:={gui} rviz:={rviz} "
             f"initial_battery_percentage:={cooperative_soc:.2f} "
+            "initial_ugv_drive_battery_percentage:="
+            f"{cooperative_drive_soc:.2f} "
+            "initial_ugv_charging_battery_percentage:="
+            f"{cooperative_charging_soc:.2f} "
+            f"enable_energy_constraints:={str(energy_enabled).lower()} "
+            f"enable_dynamic_obstacles:={str(dynamic_enabled).lower()} "
+            f"obstacle_density:={obstacle_density if dynamic_enabled else 'none'} "
             f"visualize_sensor_rays:={rays}",
         )]
 
@@ -323,7 +404,11 @@ class CommandBuilder:
 
         action_type = "uav_interfaces/action/ExecuteDelivery"
         action_name = "/uav/execute_delivery"
-        if mode_key in ("cooperative", "cooperative_energy"):
+        if mode_key in (
+            "cooperative",
+            "cooperative_energy",
+            "cooperative_dynamic_energy",
+        ):
             action_type = (
                 "cooperative_delivery_interfaces/action/"
                 "ExecuteCooperativeDelivery"
@@ -337,7 +422,8 @@ class CommandBuilder:
         )
         return CommandSpec(
             "配送任务",
-            f"ros2 action send_goal {action_name} {action_type} "
+            f"env PYTHONUNBUFFERED=1 ros2 action send_goal "
+            f"{action_name} {action_type} "
             f"{shlex.quote(goal)} --feedback",
         )
 

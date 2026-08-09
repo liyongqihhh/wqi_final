@@ -6,6 +6,10 @@ mission:
   navigation_stall_timeout: 180.0
   navigation_progress_distance: 0.05
   navigation_progress_angle: 0.10
+  # A delivery stop is position-based. Confirm the Gazebo ground-truth pose
+  # before canceling Nav2 so a heading mismatch cannot block UAV release.
+  ugv_arrival_position_tolerance: 0.35
+  ugv_arrival_confirmation_duration: 0.60
   navigation_retry_count: 2
   navigation_retry_delay: 2.0
   uav_mission_timeout: 900.0
@@ -15,9 +19,11 @@ mission:
   ugv_settle_timeout: 15.0
   docking_timeout: 15.0
   uav_landing_height: 0.42
-  # Nav2 is capped at 0.22 m/s. Euclidean distance divided by this speed is a
+  # Nav2 is capped at 0.40 m/s. Euclidean distance divided by this speed is a
   # conservative lower bound on docked charging time during UGV transit.
-  ugv_energy_planning_speed: 0.22
+  ugv_energy_planning_speed: 0.40
+  route_planner_server_timeout: 5.0
+  route_planner_timeout: 15.0
 
 ugv_waypoints:
   logistics_center: {x: 0.0, y: -43.5, yaw: 1.571}

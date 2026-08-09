@@ -63,6 +63,19 @@ Visualization Manager:
         History Policy: Keep Last
         Depth: 1
       Use Timestamp: false
+    - Alpha: 0.65
+      Class: rviz_default_plugins/Map
+      Color Scheme: costmap
+      Draw Behind: false
+      Enabled: true
+      Name: UGV Local Costmap
+      Topic:
+        Value: /local_costmap/costmap
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
+      Use Timestamp: false
     - Class: rviz_default_plugins/Path
       Name: UGV Nav2 Plan
       Enabled: true
@@ -101,6 +114,18 @@ Visualization Manager:
       Line Style: Lines
       Line Width: 0.12
       Color: 0; 210; 255
+    - Class: rviz_default_plugins/Path
+      Name: UAV Dynamic Replanned Route
+      Enabled: true
+      Topic:
+        Value: /uav/replanned_path
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
+      Line Style: Lines
+      Line Width: 0.15
+      Color: 255; 220; 0
     - Class: rviz_default_plugins/Path
       Name: UAV Actual Flight Path
       Enabled: true

@@ -122,6 +122,8 @@ private:
   void LandingHeightCallback(const std_msgs::msg::Float64::SharedPtr msg);
 
   double last_odom_publish_time_;
+  double last_state_publish_time_;
+  double last_ground_truth_publish_time_;
   void PublishOdom(
     const ignition::math::v6::Pose3<double> & pose,
     const ignition::math::v6::Vector3<double> & velocity,

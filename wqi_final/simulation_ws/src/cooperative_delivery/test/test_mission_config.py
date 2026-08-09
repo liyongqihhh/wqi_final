@@ -12,6 +12,22 @@ from cooperative_delivery.mission_states import navigation_timeout_for_distance
 
 
 CONFIG = Path(__file__).parents[1] / "config" / "cooperative_waypoints.yaml"
+SCRIPTS = Path(__file__).parents[1] / "scripts"
+LAUNCH = Path(__file__).parents[1] / "launch" / "cooperative_delivery.launch.py"
+
+
+def test_ros_launch_scripts_are_executable():
+    for name in ("cooperative_mission_manager", "ugv_energy_manager"):
+        path = SCRIPTS / name
+        assert path.is_file()
+        assert path.stat().st_mode & 0o111
+
+
+def test_cooperative_launch_accepts_a_regression_mission_config():
+    launch_text = LAUNCH.read_text(encoding="utf-8")
+
+    assert 'LaunchConfiguration("mission_config")' in launch_text
+    assert '"mission_config": mission_config' in launch_text
 
 
 def test_teaching_mission_stops_at_door_and_delivers_vertically():
@@ -104,6 +120,43 @@ def test_optimizer_shortens_route_and_keeps_payload_with_its_target():
     assert plan.total_cost < requested_cost
 
 
+def test_optimizer_accepts_nav2_style_road_costs():
+    config = CooperativeMissionConfig(CONFIG)
+    requested = config.resolve([
+        "teaching_building", "laboratory", "library"
+    ])
+    home = config.ugv_home.name
+    costs = {
+        (home, "teaching_door"): 80.0,
+        (home, "laboratory_door"): 20.0,
+        (home, "library_door"): 60.0,
+        ("teaching_door", "laboratory_door"): 20.0,
+        ("teaching_door", "library_door"): 70.0,
+        ("laboratory_door", "teaching_door"): 20.0,
+        ("laboratory_door", "library_door"): 20.0,
+        ("library_door", "teaching_door"): 20.0,
+        ("library_door", "laboratory_door"): 20.0,
+        ("teaching_door", home): 20.0,
+        ("laboratory_door", home): 80.0,
+        ("library_door", home): 60.0,
+    }
+
+    optimized, plan = config.optimize_targets_with_distance(
+        requested,
+        True,
+        lambda first, second: (
+            0.0
+            if first.name == second.name
+            else costs[(first.name, second.name)]
+        ),
+    )
+
+    assert [target.name for target in optimized] == [
+        "laboratory", "library", "teaching_building"
+    ]
+    assert plan.total_cost == 80.0
+
+
 def test_logistics_target_supports_fast_closed_loop_regression():
     config = CooperativeMissionConfig(CONFIG)
     target = config.resolve(["logistics_center"])[0]
@@ -132,4 +185,6 @@ def test_long_campus_route_gets_virtualbox_navigation_budget():
     assert timeout <= float(settings["navigation_timeout_max"])
     assert float(settings["navigation_stall_timeout"]) >= 120.0
     assert float(settings["navigation_progress_distance"]) <= 0.1
+    assert float(settings["ugv_arrival_position_tolerance"]) <= 0.5
+    assert float(settings["ugv_arrival_confirmation_duration"]) >= 0.5
     assert int(settings["navigation_retry_count"]) >= 1

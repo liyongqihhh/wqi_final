@@ -112,6 +112,7 @@ bt_navigator:
       - nav2_assisted_teleop_cancel_bt_node
       - nav2_drive_on_heading_cancel_bt_node
       - nav2_is_battery_charging_condition_bt_node
+      - nav2_dynamic_obstacle_cleared_condition_bt_node
 
 bt_navigator_navigate_through_poses_rclcpp_node:
   ros__parameters:
@@ -137,7 +138,7 @@ controller_server:
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.1
-      movement_time_allowance: 20.0
+      movement_time_allowance: 8.0
     # Goal checker parameters
     #precise_goal_checker:
     #  plugin: "nav2_controller::SimpleGoalChecker"
@@ -149,47 +150,166 @@ controller_server:
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.25
       yaw_goal_tolerance: 0.25
-    # DWB parameters
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      # Stable values from the last UGV-only revision. The previous 1 m/s
-      # tuning exceeded the steering response of this differential-drive model
-      # and produced an oscillating S-shaped trajectory.
-      desired_linear_vel: 0.22
-      max_linear_vel: 0.25
-      min_linear_vel: 0.03
-      lookahead_dist: 0.45
-      max_lookahead_dist: 0.8
-      min_lookahead_dist: 0.25
-      lookahead_time: 1.2
+      # A 0.40 m/s cruise remains below the model's 1 m/s wheel limit. The
+      # longer velocity-scaled lookahead and limited steering acceleration keep
+      # straight road segments from developing the S-shaped response observed
+      # with the old short-lookahead high-speed tuning.
+      desired_linear_vel: 0.40
+      max_linear_vel: 0.40
+      min_linear_vel: 0.04
+      lookahead_dist: 0.70
+      max_lookahead_dist: 1.40
+      min_lookahead_dist: 0.45
+      lookahead_time: 2.0
       min_approach_linear_velocity: 0.04
-      approach_velocity_scaling_dist: 0.8
-      rotate_to_heading_angular_vel: 0.8
-      rotate_to_heading_min_angle: 0.55
-      max_angular_accel: 2.0
+      approach_velocity_scaling_dist: 1.2
+      rotate_to_heading_angular_vel: 0.65
+      rotate_to_heading_min_angle: 0.65
+      max_angular_accel: 1.2
       use_velocity_scaled_lookahead_dist: true
       use_regulated_linear_velocity_scaling: true
       use_cost_regulated_linear_velocity_scaling: true
-      cost_scaling_dist: 0.8
-      cost_scaling_gain: 0.7
-      regulated_linear_scaling_min_radius: 1.0
-      regulated_linear_scaling_min_speed: 0.05
+      cost_scaling_dist: 0.7
+      cost_scaling_gain: 0.85
+      # Must match the local inflation layer so RPP does not interpret the
+      # narrowed shoulder as a much wider high-cost region.
+      inflation_cost_scaling_factor: 2.5
+      regulated_linear_scaling_min_radius: 1.6
+      regulated_linear_scaling_min_speed: 0.10
       use_rotate_to_heading: true
       use_interpolation: true
       allow_reversing: false
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 3.0
       transform_tolerance: 0.1
+      # Dynamic mode rewrites the plugin to DWBLocalPlanner. The standard DWB
+      # generator supplies accelerated nonholonomic trajectories; the custom
+      # critic adds the moving-obstacle collision-time term from Missura and
+      # Bennewitz (ICRA 2019). Static mode ignores these extra parameters.
+      # Dynamic mode runs this controller at 10 Hz in VirtualBox. The
+      # paper evaluates a compact sampled control set; 7 x 11 candidates keep
+      # enough forward/angular choices without materializing debug data for
+      # every trajectory.
+      debug_trajectory_details: false
+      trajectory_generator_name: "dwb_plugins::LimitedAccelGenerator"
+      sim_period: 0.10
+      min_vel_x: 0.0
+      min_vel_y: 0.0
+      max_vel_x: 0.40
+      max_vel_y: 0.0
+      max_vel_theta: 0.65
+      min_speed_xy: 0.0
+      max_speed_xy: 0.40
+      min_speed_theta: 0.0
+      acc_lim_x: 0.45
+      acc_lim_y: 0.0
+      acc_lim_theta: 1.2
+      decel_lim_x: -0.65
+      decel_lim_y: 0.0
+      decel_lim_theta: -1.2
+      vx_samples: 7
+      vy_samples: 1
+      vtheta_samples: 11
+      sim_time: 4.0
+      linear_granularity: 0.10
+      angular_granularity: 0.05
+      xy_goal_tolerance: 0.25
+      trans_stopped_velocity: 0.04
+      short_circuit_trajectory_evaluation: false
+      stateful: true
+      default_critic_namespaces: ["dwb_critics", "ugvcar_navigation2"]
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "PredictiveCollision", "PathHeading", "PathAlign", "GoalAlign", "PathDist", "GoalDist", "PreferForward", "Twirling"]
+      BaseObstacle.scale: 0.02
+      # This scale dominates the bounded 12 m local-grid progress costs. Thus
+      # collision-free candidates always win; if every candidate collides, the
+      # TTC difference dominates and DWB selects the trajectory with most time.
+      PredictiveCollision.scale: 1000000.0
+      PredictiveCollision.tracks_topic: "/ugv/tracked_dynamic_obstacles"
+      PredictiveCollision.robot_radius: 0.22
+      # Keep this equal to the predictor's map-level margin. A stricter local
+      # envelope would reject the D* Lite route that was computed as safe.
+      PredictiveCollision.safety_margin: 0.30
+      PredictiveCollision.track_timeout: 0.75
+      PredictiveCollision.prediction_horizon: 4.0
+      # A small raw clearance term becomes at most 100 after the 1e6 safety
+      # scale. This makes a wide pass preferable while collision costs remain
+      # categorically larger than all path-progress critics.
+      PredictiveCollision.preferred_clearance: 0.45
+      PredictiveCollision.clearance_weight: 0.0001
+      # Map-grid alignment can prefer zero velocity when a new route starts
+      # behind a stopped UGV. This critic is active only below 0.08 m/s and
+      # above a 40-degree heading error, so it does not steer during cruising.
+      PathHeading.scale: 20.0
+      PathHeading.lookahead_distance: 0.80
+      PathHeading.activation_angle: 0.70
+      PathHeading.activation_linear_velocity: 0.08
+      PathHeading.translation_weight: 3.0
+      PathHeading.idle_penalty: 0.6
+      PathHeading.wrong_turn_penalty: 1.0
+      PathAlign.scale: 48.0
+      PathAlign.forward_point_distance: 0.70
+      GoalAlign.scale: 20.0
+      GoalAlign.forward_point_distance: 0.70
+      PathDist.scale: 40.0
+      GoalDist.scale: 24.0
+      PreferForward.scale: 5.0
+      Twirling.scale: 2.0
+      RotateToGoal.scale: 32.0
+      RotateToGoal.slowing_factor: 5.0
+      RotateToGoal.lookahead_time: -1.0
+
+# Nav2 continues to own all route changes. This node is the final 360-degree
+# sensor envelope between Nav2's velocity command and ros2_control. Its
+# emergency polygons cover the commanded forward motion; a faster obstacle
+# approaching from behind must not stop the UGV while Nav2 is changing lanes.
+collision_monitor:
+  ros__parameters:
+    use_sim_time: True
+    base_frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "/cmd_vel"
+    cmd_vel_out_topic: "/cmd_vel_safe"
+    transform_tolerance: 0.2
+    source_timeout: 1.0
+    base_shift_correction: True
+    stop_pub_timeout: 0.5
+    polygons: ["StopZone", "SlowdownZone"]
+    StopZone:
+      type: "polygon"
+      points: [0.70, 0.50, 0.70, -0.50, -0.10, -0.50, -0.10, 0.50]
+      action_type: "stop"
+      max_points: 3
+      visualize: True
+      polygon_pub_topic: "/ugv/safety/stop_zone"
+      enabled: True
+    SlowdownZone:
+      type: "polygon"
+      points: [1.80, 0.95, 1.80, -0.95, -0.15, -0.95, -0.15, 0.95]
+      action_type: "slowdown"
+      max_points: 3
+      slowdown_ratio: 0.45
+      visualize: True
+      polygon_pub_topic: "/ugv/safety/slowdown_zone"
+      enabled: True
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "/scan"
+      enabled: True
 
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 5.0
-      publish_frequency: 2.0
+      update_frequency: 10.0
+      publish_frequency: 5.0
       global_frame: odom
       robot_base_frame: base_link
       use_sim_time: True
       rolling_window: true
-      width: 8
-      height: 8
+      width: 12
+      height: 12
       resolution: 0.05
       robot_radius: 0.22
       track_unknown_space: false
@@ -197,7 +317,7 @@ local_costmap:
       # recoverable shoulder and lethal off-road cells. Applying it locally
       # prevents outward steering without turning a small deviation into an
       # immediate navigation failure.
-      plugins: ["voxel_layer", "inflation_layer"]
+      plugins: ["obstacle_layer", "inflation_layer"]
       filters: ["keepout_filter"]
       keepout_filter:
         plugin: "nav2_costmap_2d::KeepoutFilter"
@@ -205,19 +325,20 @@ local_costmap:
         filter_info_topic: "/costmap_filter_info"
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 1.5
-        inflation_radius: 1.0
+        # The global map keeps a 1.0 m planning buffer. The local execution
+        # buffer is narrower and decays faster, allowing a planned detour to
+        # use the paved shoulder while retaining collision checking.
+        cost_scaling_factor: 2.5
+        inflation_radius: 0.8
         inflate_unknown: true
         inflate_around_unknown: true
-      voxel_layer:
-        plugin: "nav2_costmap_2d::VoxelLayer"
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
-        publish_voxel_map: True
-        origin_z: 0.0
-        z_resolution: 0.05
-        z_voxels: 16
-        max_obstacle_height: 2.0
-        mark_threshold: 0
+        footprint_clearing_enabled: True
+        # The local controller reacts only to measured geometry. Predictive
+        # conflict points belong to the global planner; putting them here makes
+        # RPP stop in front of a virtual point while a rear obstacle closes in.
         observation_sources: scan
         scan:
           topic: /scan
@@ -225,16 +346,19 @@ local_costmap:
           clearing: True
           marking: True
           data_type: "LaserScan"
-          raytrace_max_range: 4.0
+          observation_persistence: 0.0
+          expected_update_rate: 0.0
+          inf_is_valid: True
+          raytrace_max_range: 8.0
           raytrace_min_range: 0.0
-          obstacle_max_range: 3.5
+          obstacle_max_range: 4.5
           obstacle_min_range: 0.0
       always_send_full_costmap: True
 
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 1.0
+      update_frequency: 2.0
       publish_frequency: 1.0
       global_frame: map
       robot_base_frame: base_link
@@ -251,24 +375,61 @@ global_costmap:
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
-        observation_sources: scan
+        footprint_clearing_enabled: True
+        # Current obstacle geometry comes from scan. The second source contains
+        # Independent risk points are published for every confirmed
+        # velocity-obstacle conflict so simultaneous front and rear hazards are
+        # represented in the yellow global route.
+        observation_sources: scan predicted_scan predicted_points
         scan:
           topic: /scan
           max_obstacle_height: 2.0
           clearing: True
           marking: True
           data_type: "LaserScan"
-          raytrace_max_range: 4.0
+          observation_persistence: 0.0
+          expected_update_rate: 0.0
+          inf_is_valid: True
+          raytrace_max_range: 15.0
           raytrace_min_range: 0.0
-          obstacle_max_range: 3.5
+          obstacle_max_range: 14.0
+          # Keep raw near-field hits out of the global planner's start cell.
+          # The local costmap and collision monitor retain the full scan.
+          obstacle_min_range: 1.2
+        predicted_scan:
+          topic: /scan_dynamic_predictions
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: False
+          data_type: "LaserScan"
+          observation_persistence: 0.0
+          expected_update_rate: 0.0
+          inf_is_valid: True
+          raytrace_max_range: 15.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 14.0
+          obstacle_min_range: 0.0
+        predicted_points:
+          topic: /points_dynamic_predictions
+          min_obstacle_height: 0.0
+          max_obstacle_height: 2.0
+          clearing: False
+          marking: True
+          data_type: "PointCloud2"
+          observation_persistence: 0.0
+          expected_update_rate: 0.0
+          obstacle_max_range: 14.0
           obstacle_min_range: 0.0
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 1.5
-        inflation_radius: 1.0
+        # Prediction points already include the obstacle radius and clearance.
+        # A second 1 m inflation closed the remaining half of the 5.5 m road,
+        # so use the same 0.8 m execution buffer as the local costmap.
+        cost_scaling_factor: 2.5
+        inflation_radius: 0.8
         inflate_unknown: true
         inflate_around_unknown: true
       always_send_full_costmap: True
@@ -290,7 +451,7 @@ map_saver:
 
 planner_server:
   ros__parameters:
-    expected_planner_frequency: 1.0
+    expected_planner_frequency: 2.0
     use_sim_time: True
     planner_plugins: ["GridBased"]
     GridBased:
@@ -305,6 +466,14 @@ planner_server:
       cost_travel_multiplier: 4.0
       use_final_approach_orientation: false
       smooth_path: true
+      # Dynamic mode rewrites this plugin to DStarLitePlanner. These values
+      # implement incremental repair while retaining weighted costmap edges.
+      # A short start tolerance lets a UGV whose centre reaches the rasterized
+      # road edge plan back into the drivable corridor instead of deadlocking.
+      start_tolerance: 0.6
+      lethal_cost: 253
+      cost_penalty: 3.0
+      max_expansions: 1000000
 
 smoother_server:
   ros__parameters:
@@ -312,8 +481,8 @@ smoother_server:
     smoother_plugins: ["simple_smoother"]
     simple_smoother:
       plugin: "nav2_smoother::SimpleSmoother"
-      tolerance: 1.0e-10
-      max_its: 1000
+      tolerance: 1.0e-6
+      max_its: 200
       do_refinement: True
 
 behavior_server:
@@ -362,10 +531,10 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [0.22, 0.0, 0.8]
-    min_velocity: [-0.22, 0.0, -0.8]
-    max_accel: [1.5, 0.0, 2.0]
-    max_decel: [-1.5, 0.0, -2.0]
+    max_velocity: [0.40, 0.0, 0.65]
+    min_velocity: [-0.10, 0.0, -0.65]
+    max_accel: [0.45, 0.0, 1.2]
+    max_decel: [-0.65, 0.0, -1.2]
     odom_topic: "odom"
     odom_duration: 0.1
     velocity_timeout: 1.0

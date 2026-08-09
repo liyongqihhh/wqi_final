@@ -1,0 +1,50 @@
+defaults:
+  ugv_home: {x: 0.0, y: -43.5, yaw: 1.571}
+  uav_home: {x: 0.0, y: -43.5, z: 0.42}
+  precondition_position_tolerance_m: 1.5
+  precondition_speed_tolerance_mps: 0.10
+  action_timeout_s: 1800.0
+  settle_time_s: 3.0
+
+scenarios:
+  logistics_center_smoke:
+    deliveries:
+      - name: logistics_center
+        floor: 1
+        payload_kg: 0.0
+        ugv_pose: {x: 0.0, y: -43.5, yaw: 1.571}
+        uav_pose: {x: 0.0, y: -43.5, z: 1.6}
+
+  teaching_building:
+    deliveries:
+      - name: teaching_building
+        floor: 3
+        payload_kg: 0.30
+        ugv_pose: {x: -40.0, y: 9.5, yaw: 1.571}
+        uav_pose: {x: -40.0, y: 9.5, z: 8.0}
+
+  laboratory:
+    deliveries:
+      - name: laboratory
+        floor: 4
+        payload_kg: 0.35
+        ugv_pose: {x: 62.0, y: 19.5, yaw: 1.571}
+        uav_pose: {x: 62.0, y: 19.5, z: 11.2}
+
+  multi_target_regression:
+    deliveries:
+      - name: laboratory
+        floor: 4
+        payload_kg: 0.35
+        ugv_pose: {x: 62.0, y: 19.5, yaw: 1.571}
+        uav_pose: {x: 62.0, y: 19.5, z: 11.2}
+      - name: library
+        floor: 3
+        payload_kg: 0.25
+        ugv_pose: {x: 62.0, y: 40.5, yaw: 1.571}
+        uav_pose: {x: 62.0, y: 40.5, z: 8.0}
+      - name: dormitory_2
+        floor: 4
+        payload_kg: 0.20
+        ugv_pose: {x: 30.0, y: 11.0, yaw: 0.0}
+        uav_pose: {x: 42.0, y: 8.5, z: 11.2}

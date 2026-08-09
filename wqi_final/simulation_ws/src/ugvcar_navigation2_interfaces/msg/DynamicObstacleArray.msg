@@ -1,0 +1,2 @@
+std_msgs/Header header
+ugvcar_navigation2_interfaces/DynamicObstacle[] obstacles

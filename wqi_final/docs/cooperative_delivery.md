@@ -158,7 +158,8 @@ Door and floor configuration currently used by the manager:
   completion.
 - Run the final `laboratory -> library -> dormitory` command uninterrupted after
   the door/floor mapping change.
-- Record the implemented UAV cumulative consumption/charging topics and add a
-  separate UGV energy estimate for the final three-mode efficiency comparison.
+- Record the UAV cumulative consumption/charging topics together with live UGV
+  traction-battery and UAV-charging-battery consumption for the final
+  three-mode efficiency comparison.
 - Online three-dimensional replanning and moving-platform landing are outside
   the current fixed-corridor, fixed-rendezvous design.

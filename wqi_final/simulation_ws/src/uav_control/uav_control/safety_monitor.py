@@ -3,6 +3,7 @@ import threading
 import time
 
 import rclpy
+from geometry_msgs.msg import Vector3Stamped
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -16,9 +17,11 @@ from std_msgs.msg import Bool, Float32, String
 from visualization_msgs.msg import Marker
 
 from uav_control.safety_geometry import (
+    StableObstacleVectorFilter,
     is_diagonal_ground_return,
     minimum_valid_scan_range,
     minimum_obstacle_distances,
+    obstacle_surface_vector,
 )
 
 
@@ -48,6 +51,14 @@ class SafetyMonitor(Node):
         self.declare_parameter("blind_spot_threshold", 1.8)
         self.declare_parameter("sensor_timeout", 1.0)
         self.declare_parameter("ground_return_tolerance", 0.18)
+        self.declare_parameter("obstacle_patch_depth", 0.35)
+        self.declare_parameter("obstacle_patch_radius", 0.75)
+        self.declare_parameter("obstacle_vector_alpha", 0.35)
+        self.declare_parameter(
+            "obstacle_vector_association_distance", 0.9
+        )
+        self.declare_parameter("obstacle_vector_switch_confirmations", 3)
+        self.declare_parameter("obstacle_vector_maximum_hold_updates", 3)
         self.declare_parameter("publish_rate", 10.0)
 
         self.safety_radius = float(self.get_parameter("safety_radius").value)
@@ -80,6 +91,32 @@ class SafetyMonitor(Node):
         self.sensor_timeout = float(self.get_parameter("sensor_timeout").value)
         self.ground_tolerance = float(
             self.get_parameter("ground_return_tolerance").value
+        )
+        self.obstacle_patch_depth = float(
+            self.get_parameter("obstacle_patch_depth").value
+        )
+        self.obstacle_patch_radius = float(
+            self.get_parameter("obstacle_patch_radius").value
+        )
+        self.obstacle_vector_filter = StableObstacleVectorFilter(
+            alpha=float(
+                self.get_parameter("obstacle_vector_alpha").value
+            ),
+            association_distance=float(
+                self.get_parameter(
+                    "obstacle_vector_association_distance"
+                ).value
+            ),
+            switch_confirmations=int(
+                self.get_parameter(
+                    "obstacle_vector_switch_confirmations"
+                ).value
+            ),
+            maximum_hold_updates=int(
+                self.get_parameter(
+                    "obstacle_vector_maximum_hold_updates"
+                ).value
+            ),
         )
         publish_rate = float(self.get_parameter("publish_rate").value)
 
@@ -120,6 +157,9 @@ class SafetyMonitor(Node):
         )
         self.minimum_pub = self.create_publisher(
             Float32, "safety/min_distance", 10
+        )
+        self.nearest_obstacle_pub = self.create_publisher(
+            Vector3Stamped, "safety/nearest_obstacle", 10
         )
         self.clearance_pub = self.create_publisher(
             Float32, "safety/ground_clearance", 10
@@ -164,11 +204,11 @@ class SafetyMonitor(Node):
         with self.lock:
             ground_clearance = self.range_values["down"]
         try:
-            points = point_cloud2.read_points(
+            points = tuple(point_cloud2.read_points(
                 message,
                 field_names=("x", "y", "z"),
                 skip_nans=True,
-            )
+            ))
             minimum, platform_minimum = minimum_obstacle_distances(
                 points,
                 self.lidar_height,
@@ -179,6 +219,17 @@ class SafetyMonitor(Node):
                 self.self_filter_radius,
                 self.platform_protected_min_height,
             )
+            _, nearest = obstacle_surface_vector(
+                points,
+                self.lidar_height,
+                self.center_height,
+                ground_clearance,
+                self.lidar_to_down_sensor,
+                self.ground_tolerance,
+                self.self_filter_radius,
+                self.obstacle_patch_depth,
+                self.obstacle_patch_radius,
+            )
         except (AssertionError, KeyError, TypeError, ValueError) as error:
             self.get_logger().error(f"Cannot read UAV lidar point cloud: {error}")
             return
@@ -186,6 +237,21 @@ class SafetyMonitor(Node):
             self.lidar_min_distance = minimum
             self.lidar_platform_min_distance = platform_minimum
             self.lidar_updated_at = time.monotonic()
+            if nearest is None:
+                self.obstacle_vector_filter.reset()
+                stable_nearest = None
+            else:
+                stable_nearest = self.obstacle_vector_filter.update(nearest)
+        if stable_nearest is not None:
+            vector = Vector3Stamped()
+            vector.header.stamp = message.header.stamp
+            # The vector is translated to the body-centred safety sphere and
+            # all sensor axes are aligned with base_link.
+            vector.header.frame_id = "uav/base_link"
+            vector.vector.x = float(stable_nearest[0])
+            vector.vector.y = float(stable_nearest[1])
+            vector.vector.z = float(stable_nearest[2])
+            self.nearest_obstacle_pub.publish(vector)
 
     def _snapshot(self):
         with self.lock:
