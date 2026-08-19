@@ -8,6 +8,7 @@ from delivery_evaluation.report_generator import (
     load_records,
     write_records,
 )
+from delivery_evaluation.paths import default_results_directory
 
 
 VALID_MODES = ("ugv_only", "uav_only", "cooperative")
@@ -91,10 +92,7 @@ def main(args=None) -> None:
     )
     parser.add_argument(
         "--results-dir",
-        default=(
-            "/home/wqi/design_final/wqi_final/simulation_ws/"
-            "experiment_results"
-        ),
+        default=str(default_results_directory()),
     )
     parser.add_argument("--continue-on-failure", action="store_true")
     parser.add_argument("--dry-run", action="store_true")

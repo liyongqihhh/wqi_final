@@ -24,6 +24,39 @@ def test_all_six_modes_have_launch_commands():
         assert all("ros2 launch" in spec.command for spec in commands)
 
 
+def test_command_builder_uses_repository_sibling_for_artifacts(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("WQI_BUILD_ROOT", raising=False)
+    repository = tmp_path / "portable_clone"
+    workspace = repository / "wqi_final" / "simulation_ws"
+    workspace.mkdir(parents=True)
+    (repository / ".git").mkdir()
+
+    builder = CommandBuilder(workspace=workspace)
+
+    assert builder.setup_file == (
+        tmp_path
+        / "portable_clone_artifacts"
+        / "install"
+        / "setup.bash"
+    )
+
+
+def test_command_builder_honors_external_build_root(
+    tmp_path, monkeypatch
+):
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "custom_artifacts"
+    workspace.mkdir()
+    monkeypatch.setenv("WQI_BUILD_ROOT", str(artifacts))
+
+    builder = CommandBuilder(workspace=workspace)
+
+    assert builder.setup_file == artifacts / "install" / "setup.bash"
+    assert str(builder.setup_file) in builder.shell_command("ros2 node list")
+
+
 def test_viewer_selection_controls_both_frontends():
     builder = CommandBuilder()
     rviz_only = builder.simulation_commands(

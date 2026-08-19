@@ -1,10 +1,42 @@
 from dataclasses import dataclass
 from enum import Enum
+import os
 from pathlib import Path
 import shlex
 
 
-DEFAULT_WORKSPACE = Path("/home/wqi/design_final/wqi_final/simulation_ws")
+def _find_repository_root(workspace: Path) -> Path:
+    for candidate in (workspace, *workspace.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return workspace.parent.parent
+
+
+def _discover_workspace() -> Path:
+    configured = os.environ.get("WQI_WORKSPACE")
+    if configured:
+        return Path(configured).expanduser().resolve()
+
+    source_file = Path(__file__).resolve()
+    for candidate in source_file.parents:
+        if (candidate / "src" / "simulation_ui" / "package.xml").is_file():
+            return candidate
+
+    current = Path.cwd().resolve()
+    for candidate in (current, *current.parents):
+        if (candidate / "src" / "simulation_ui" / "package.xml").is_file():
+            return candidate
+    return current
+
+
+def _default_build_root(workspace: Path) -> Path:
+    configured = os.environ.get("WQI_BUILD_ROOT")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    repository = _find_repository_root(workspace)
+    return repository.parent / f"{repository.name}_artifacts"
+
+
 UAV_BATTERY_RESERVE_PERCENT = 20
 UAV_LOW_ENERGY_WARNING_PERCENT = 40
 UAV_RECOMMENDED_TEST_PERCENT = 80
@@ -227,12 +259,19 @@ class CommandSpec:
 
 
 class CommandBuilder:
-    def __init__(self, workspace: Path = DEFAULT_WORKSPACE) -> None:
-        self.workspace = Path(workspace)
+    def __init__(
+        self,
+        workspace: Path | None = None,
+        build_root: Path | None = None,
+    ) -> None:
+        self.workspace = Path(workspace or _discover_workspace()).resolve()
+        self.build_root = Path(
+            build_root or _default_build_root(self.workspace)
+        ).resolve()
 
     @property
     def setup_file(self) -> Path:
-        return self.workspace / "install" / "setup.bash"
+        return self.build_root / "install" / "setup.bash"
 
     @staticmethod
     def _flags(viewer: ViewerMode) -> tuple[str, str]:

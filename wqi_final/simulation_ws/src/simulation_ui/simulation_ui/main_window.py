@@ -767,7 +767,9 @@ class SimulationDashboard(QMainWindow):
             QMessageBox.critical(
                 self,
                 "工作空间未编译",
-                "找不到 simulation_ws/install/setup.bash。请先执行 colcon build。",
+                "找不到外部安装环境：\n"
+                f"{self.command_builder.setup_file}\n\n"
+                "请在 simulation_ws 中执行 bash ./build_workspace.sh。",
             )
             return
         commands = self._simulation_commands()

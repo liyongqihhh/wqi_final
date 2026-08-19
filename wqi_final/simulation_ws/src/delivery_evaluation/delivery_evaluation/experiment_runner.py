@@ -36,6 +36,7 @@ from delivery_evaluation.energy_estimator import (
 )
 from delivery_evaluation.metrics_collector import MissionMetricsCollector
 from delivery_evaluation.models import RunRecord
+from delivery_evaluation.paths import default_results_directory
 from delivery_evaluation.report_generator import append_record
 from delivery_evaluation.scenario_config import load_scenarios
 
@@ -57,7 +58,7 @@ class ExperimentRunner(Node):
         self.declare_parameter("random_seed", 42)
         self.declare_parameter(
             "results_dir",
-            "/home/wqi/design_final/wqi_final/simulation_ws/experiment_results",
+            str(default_results_directory()),
         )
         self.declare_parameter(
             "scenario_file", str(share / "config" / "experiment_scenarios.yaml")

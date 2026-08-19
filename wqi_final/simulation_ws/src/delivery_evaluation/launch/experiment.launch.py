@@ -17,6 +17,8 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+from delivery_evaluation.paths import default_results_directory
+
 
 def _include(package, filename, arguments):
     path = os.path.join(
@@ -181,9 +183,7 @@ def generate_launch_description():
         DeclareLaunchArgument("continue_on_failure", default_value="false"),
         DeclareLaunchArgument(
             "results_dir",
-            default_value=(
-                "/home/wqi/design_final/wqi_final/simulation_ws/experiment_results"
-            ),
+            default_value=str(default_results_directory()),
         ),
         OpaqueFunction(function=_launch_setup),
     ])

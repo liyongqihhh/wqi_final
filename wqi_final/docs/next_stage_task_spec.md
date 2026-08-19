@@ -6,8 +6,8 @@
 
 ## 一、项目环境
 
-- 仓库：`/home/wqi/design_final/wqi_final`
-- ROS2 工作空间：`/home/wqi/design_final/wqi_final/simulation_ws`
+- 仓库源码目录：`<clone-dir>/wqi_final`
+- ROS2 工作空间：`<clone-dir>/wqi_final/simulation_ws`
 - 环境：Ubuntu 22.04、ROS2 Humble、Gazebo Classic、VirtualBox
 - 源码修改范围：`simulation_ws/src/`
 - 设计文档允许写入：`docs/`
@@ -263,8 +263,8 @@ Gazebo 坐标强制复位。由于当前 UGV 速度为 `0.22 m/s` 且 VirtualBox
 
 ## 十二、验收标准
 
-1. `colcon build` 全工作空间成功。
-2. `colcon test --packages-select delivery_evaluation` 无失败。
+1. `bash ./build_workspace.sh` 在仓库外完成全工作空间编译。
+2. `bash ./test_workspace.sh --packages-select delivery_evaluation` 无失败。
 3. 原有 UGV、UAV、联合启动命令仍能运行。
 4. 正式 E1、E2、E3 各生成 3 条有效记录。
 5. 教学楼协同闭环连续 3 次均成功，并且每次最终 UAV 已对接、UGV 已回到物流
@@ -285,9 +285,9 @@ Gazebo 坐标强制复位。由于当前 UGV 速度为 `0.22 m/s` 且 VirtualBox
 
 ```bash
 cd ~/design_final/wqi_final/simulation_ws
-source /opt/ros/humble/setup.bash
-colcon build --executor sequential --event-handlers console_cohesion+
-source install/setup.bash
+bash ./build_workspace.sh --executor sequential \
+  --event-handlers console_cohesion+
+source ./setup_workspace.bash
 ```
 
 运行一次协同冒烟实验：

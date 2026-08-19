@@ -89,9 +89,8 @@ terminal and DDS load.
 
 ```bash
 cd ~/design_final/wqi_final/simulation_ws
-source /opt/ros/humble/setup.bash
-colcon build --packages-up-to cooperative_delivery uav_bringup
-source install/setup.bash
+bash ./build_workspace.sh --packages-up-to cooperative_delivery uav_bringup
+source ./setup_workspace.bash
 ros2 launch cooperative_delivery cooperative_delivery.launch.py \
   gui:=false rviz:=true visualize_sensor_rays:=false
 ```

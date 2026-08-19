@@ -78,7 +78,7 @@ buildings:
     roof_color: [0.60, 0.36, 0.10, 1.0]
   - name: Innovation Center
     model_name: innovation_center
-    center: [-20.0, 50.0]
+    center: [-20.0, 51.5]
     size: [20.0, 14.0]
     floors: 6
     door_direction: south
@@ -86,7 +86,7 @@ buildings:
     roof_color: [0.08, 0.34, 0.38, 1.0]
   - name: Library
     model_name: library
-    center: [62.0, 50.0]
+    center: [62.0, 51.5]
     size: [18.0, 14.0]
     floors: 7
     door_direction: south
@@ -153,7 +153,7 @@ roads:
   - name: south_service_loop
     category: main
     width: 5.5
-    centerline: [[0, -44], [0, -18], [24, -18], [30, -20], [46, -20], [52, -26], [52, -34], [46, -40], [30, -40], [24, -34], [18, -40], [0, -44]]
+    centerline: [[0, -43], [0, -18], [24, -18], [30, -20], [38, -20], [46, -20], [52, -20], [54, -22], [54, -39], [52, -41], [46, -41], [30, -41], [0, -43]]
   - name: campus_main_trunk
     category: main
     width: 5.5
@@ -165,7 +165,7 @@ roads:
   - name: north_campus_loop
     category: branch
     width: 4.0
-    centerline: [[30, 11], [54, 11], [62, 19.5], [76, 20], [76, 38], [62, 40.5], [48, 40], [30, 38], [14, 39.5], [0, 36], [-8, 42], [-20, 40.5], [-34, 40], [-54, 38], [-62, 32], [-62, 24], [-58, 16], [-56, 9.5], [-40, 9.5], [-28, 9], [-18, 8], [-8, 7], [6, 11], [30, 11]]
+    centerline: [[30, 11], [54, 11], [62, 19.5], [78, 18.5], [78, 40.5], [62, 40.5], [47, 40.5], [30, 38], [14, 39.5], [0, 36], [-8, 42], [-20, 40.5], [-34, 40], [-54, 38], [-62, 32], [-62, 24], [-58, 16], [-56, 9.5], [-40, 9.5], [-28, 9], [-18, 8], [-8, 7], [6, 11], [30, 11]]
 
 delivery_points:
   - name: logistics_center_stop

@@ -88,10 +88,9 @@ git clone https://github.com/liyongqihhh/wqi_final.git ~/design_final
 cd ~/design_final/wqi_final/simulation_ws
 source /opt/ros/humble/setup.bash
 rosdep install --from-paths src --ignore-src -r -y
-colcon build
-source install/setup.bash
-colcon test --event-handlers console_cohesion+
-colcon test-result --all --verbose
+bash ./build_workspace.sh
+source ./setup_workspace.bash
+bash ./test_workspace.sh --event-handlers console_cohesion+
 ```
 
 编译和测试通过后，可先进行无图形界面的联合仿真检查：
@@ -102,43 +101,70 @@ ros2 launch cooperative_delivery cooperative_delivery.launch.py \
   enable_energy_constraints:=false enable_dynamic_obstacles:=false
 ```
 
-仓库只保存 `simulation_ws/src/` 源码、配置、地图和文档；`build/`、`install/`
-和 `log/` 必须在克隆后由 `colcon build` 重新生成，不能从其他电脑复制。
+仓库只保存 `simulation_ws/src/` 源码、配置、地图、脚本和文档。编译产物默认
+写入 Git 仓库同级目录，克隆后的结构如下：
+
+```text
+~/design_final/                    # Git 源码仓库，可直接提交或打包
+└── wqi_final/simulation_ws/
+    ├── src/
+    ├── build_workspace.sh
+    ├── setup_workspace.bash
+    └── test_workspace.sh
+~/design_final_artifacts/          # 不属于 Git 仓库
+├── build/                          # 编译中间文件
+├── install/                        # 可执行程序和动态库
+├── log/                            # colcon 编译及测试日志
+└── experiment_results/             # 自动评测记录、CSV、图表和报告
+```
+
+不要在源码目录中直接执行普通的 `colcon build`。统一使用
+`bash ./build_workspace.sh`，它会自动根据仓库目录名选择同级的
+`<仓库名>_artifacts/`。需要指定其他磁盘时，可以在编译前设置：
+
+```bash
+export WQI_BUILD_ROOT=/path/to/wqi_final_artifacts
+bash ./build_workspace.sh
+```
+
+`build/`、`install/`、`log/` 和实验结果都不上传 GitHub。前三者是可重新生成的
+本机产物，也不能从其他电脑复制使用。评测输出目录还可通过
+`WQI_EXPERIMENT_RESULTS_DIR` 单独覆盖。
 
 每次打开新终端后，先执行：
 
 ```bash
 cd ~/design_final/wqi_final/simulation_ws
-source /opt/ros/humble/setup.bash
+source ./setup_workspace.bash
 ```
 
 首次使用或修改源代码后编译整个工作空间：
 
 ```bash
-colcon build
-source install/setup.bash
+bash ./build_workspace.sh
+source ./setup_workspace.bash
 ```
 
 如果代码没有重新编译，只需要加载现有安装环境：
 
 ```bash
-source install/setup.bash
+source ./setup_workspace.bash
 ```
 
 仅编译 UAV 子系统：
 
 ```bash
-colcon build --packages-select \
+bash ./build_workspace.sh --packages-select \
   sjtu_drone_description uav_interfaces uav_description uav_control \
   uav_navigation uav_application uav_bringup
-source install/setup.bash
+source ./setup_workspace.bash
 ```
 
 编译空地协同系统及其依赖：
 
 ```bash
-colcon build --packages-up-to cooperative_delivery uav_bringup
-source install/setup.bash
+bash ./build_workspace.sh --packages-up-to cooperative_delivery uav_bringup
+source ./setup_workspace.bash
 ```
 
 ## 4. 四档动态障碍启动方法
@@ -240,7 +266,7 @@ VirtualBox 中做正式计时实验时应改为 `gui:=false rviz:=false`。
 ros2 launch delivery_evaluation experiment.launch.py \
   mode:=cooperative scenario:=teaching_building \
   obstacle_density:=none repetitions:=1 random_seed:=42 \
-  results_dir:=$PWD/experiment_results gui:=true rviz:=false
+  results_dir:=$WQI_BUILD_ROOT/experiment_results gui:=true rviz:=false
 ```
 
 ```bash
@@ -248,7 +274,7 @@ ros2 launch delivery_evaluation experiment.launch.py \
 ros2 launch delivery_evaluation experiment.launch.py \
   mode:=cooperative scenario:=teaching_building \
   obstacle_density:=low repetitions:=1 random_seed:=42 \
-  results_dir:=$PWD/experiment_results gui:=true rviz:=false
+  results_dir:=$WQI_BUILD_ROOT/experiment_results gui:=true rviz:=false
 ```
 
 ```bash
@@ -256,7 +282,7 @@ ros2 launch delivery_evaluation experiment.launch.py \
 ros2 launch delivery_evaluation experiment.launch.py \
   mode:=cooperative scenario:=teaching_building \
   obstacle_density:=medium repetitions:=1 random_seed:=42 \
-  results_dir:=$PWD/experiment_results gui:=true rviz:=false
+  results_dir:=$WQI_BUILD_ROOT/experiment_results gui:=true rviz:=false
 ```
 
 ```bash
@@ -264,7 +290,7 @@ ros2 launch delivery_evaluation experiment.launch.py \
 ros2 launch delivery_evaluation experiment.launch.py \
   mode:=cooperative scenario:=teaching_building \
   obstacle_density:=high repetitions:=1 random_seed:=42 \
-  results_dir:=$PWD/experiment_results gui:=true rviz:=false
+  results_dir:=$WQI_BUILD_ROOT/experiment_results gui:=true rviz:=false
 ```
 
 查看当前障碍数量和场景信息：
@@ -297,9 +323,8 @@ avoidance_success_rate = collision_free_runs / total_runs
 
 ```bash
 cd ~/design_final/wqi_final/simulation_ws
-source /opt/ros/humble/setup.bash
-colcon build --packages-up-to simulation_ui
-source install/setup.bash
+bash ./build_workspace.sh --packages-up-to simulation_ui
+source ./setup_workspace.bash
 ros2 run simulation_ui simulation_dashboard
 ```
 
@@ -794,7 +819,7 @@ ros2 topic echo /uav/safety/nearest_obstacle
 ros2 launch delivery_evaluation experiment.launch.py \
   mode:=cooperative scenario:=teaching_building \
   obstacle_density:=medium repetitions:=3 random_seed:=42 \
-  results_dir:=$PWD/experiment_results gui:=false rviz:=false
+  results_dir:=$WQI_BUILD_ROOT/experiment_results gui:=false rviz:=false
 ```
 
 可用模式：
@@ -814,7 +839,7 @@ ros2 run delivery_evaluation experiment_matrix \
   --initial-battery 0.80 \
   --initial-ugv-drive-battery 0.80 \
   --initial-ugv-charging-battery 0.80 \
-  --results-dir "$PWD/experiment_results" \
+  --results-dir "$WQI_BUILD_ROOT/experiment_results" \
   --continue-on-failure
 ```
 
@@ -838,25 +863,23 @@ ros2 run delivery_evaluation experiment_matrix \
 
 ```bash
 python3 src/ugvcar_description/scripts/generate_campus_delivery.py
-colcon build
-source install/setup.bash
+bash ./build_workspace.sh
+source ./setup_workspace.bash
 ```
 
 该脚本会重新生成 Gazebo world、占据地图和 Nav2 禁行掩膜。不要直接修改
-`build/`、`install/` 或 `log/` 中的生成文件。
+源码仓库或外部产物目录中的 `build/`、`install/`、`log/` 生成文件。
 
 ## 9. 编译与自动测试
 
 ```bash
 cd ~/design_final/wqi_final/simulation_ws
-source /opt/ros/humble/setup.bash
-source install/setup.bash
+source ./setup_workspace.bash
 
-colcon test --event-handlers console_cohesion+
-colcon test-result --verbose
+bash ./test_workspace.sh --event-handlers console_cohesion+
 ```
 
-2026-08-09 的当前开发基线结果：
+2026-08-19 在外部构建目录执行的当前开发基线结果：
 
 ```text
 16 packages finished

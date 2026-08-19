@@ -155,11 +155,10 @@ Mission phases are `IDLE`, `TAKEOFF`, `HOVER`, `CRUISE`, `APPROACH`,
 
 ```bash
 cd ~/design_final/wqi_final/simulation_ws
-source /opt/ros/humble/setup.bash
-colcon build --packages-select \
+bash ./build_workspace.sh --packages-select \
   sjtu_drone_description uav_interfaces uav_description uav_control \
   uav_navigation uav_application uav_bringup
-source install/setup.bash
+source ./setup_workspace.bash
 ros2 launch uav_bringup uav_sim.launch.py \
   gui:=false rviz:=true visualize_sensor_rays:=false
 ```

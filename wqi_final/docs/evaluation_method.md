@@ -115,9 +115,8 @@ endpoint_error = ||actual_delivery_position - configured_target_position||
 
 ```bash
 cd ~/design_final/wqi_final/simulation_ws
-source /opt/ros/humble/setup.bash
-colcon build
-source install/setup.bash
+bash ./build_workspace.sh
+source ./setup_workspace.bash
 ```
 
 运行单组教学楼协同实验三次：
@@ -129,7 +128,7 @@ ros2 launch delivery_evaluation experiment.launch.py \
   initial_battery_percentage:=0.80 \
   initial_ugv_drive_battery_percentage:=0.80 \
   initial_ugv_charging_battery_percentage:=0.80 \
-  results_dir:=$PWD/experiment_results gui:=false rviz:=false
+  results_dir:=$WQI_BUILD_ROOT/experiment_results gui:=false rviz:=false
 ```
 
 运行完整 36 次单目标实验矩阵：
@@ -143,7 +142,7 @@ ros2 run delivery_evaluation experiment_matrix \
   --initial-battery 0.80 \
   --initial-ugv-drive-battery 0.80 \
   --initial-ugv-charging-battery 0.80 \
-  --results-dir "$PWD/experiment_results" \
+  --results-dir "$WQI_BUILD_ROOT/experiment_results" \
   --continue-on-failure
 ```
 
