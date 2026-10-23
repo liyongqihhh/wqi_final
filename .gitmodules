@@ -1,0 +1,9 @@
+[submodule "px4_autopilot"]
+	path = wqi_final/third_party/PX4-Autopilot
+	url = https://github.com/PX4/PX4-Autopilot.git
+[submodule "px4_msgs"]
+	path = wqi_final/third_party/px4_msgs
+	url = https://github.com/PX4/px4_msgs.git
+[submodule "micro_xrce_agent"]
+	path = wqi_final/third_party/Micro-XRCE-DDS-Agent
+	url = https://github.com/eProsima/Micro-XRCE-DDS-Agent.git

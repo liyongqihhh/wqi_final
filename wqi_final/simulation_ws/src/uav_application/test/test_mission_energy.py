@@ -1,4 +1,5 @@
 from pathlib import Path
+from dataclasses import replace
 
 import pytest
 
@@ -43,6 +44,74 @@ def test_standalone_profile_contains_all_power_phases():
     assert profile.horizontal_distance_m > 0.0
     assert profile.initial_payload_mass_kg == pytest.approx(0.30)
     assert profile.segments
+
+
+def test_transfer_profile_includes_loaded_px4_delays_acceleration_and_descent():
+    energy_planner, parameters = planner()
+    profile = energy_planner.plan_transfer([(0, 0, 15), (10, 0, 15), (10, 5, 15)], .42, .3, 5)
+    assert profile.initial_payload_mass_kg == .3
+    assert profile.horizontal_distance_m == 15
+    assert profile.ascent_m == pytest.approx(14.58)
+    assert profile.descent_m == pytest.approx(14.58)
+    assert profile.hover_seconds == 5 + parameters.px4_startup_overhead_s + parameters.px4_landing_overhead_s
+    assert profile.horizontal_acceleration_seconds > 0
+    assert profile.horizontal_deceleration_seconds > 0
+    assert profile.ascent_acceleration_seconds > 0
+    assert profile.descent_deceleration_seconds > 0
+    assert all(s.payload_mass_kg == .3 for s in profile.segments)
+    unloaded = energy_planner.plan_transfer([(0, 0, 15), (10, 0, 15), (10, 5, 15)], .42, 0, 5)
+    model = BatteryModel(parameters)
+    assert model.estimate(profile).required_energy_wh > model.estimate(unloaded).required_energy_wh
+
+
+@pytest.mark.parametrize("route,mass,height,hover", [
+    ([(0, 0, 15)], .3, .42, 5), ([(0, 0), (1, 0)], .3, .42, 5),
+    ([(0, 0, float('nan')), (1, 0, 15)], .3, .42, 5),
+    ([(0, 0, 15), (1, 0, 15)], 2, .42, 5),
+    ([(0, 0, 15), (1, 0, 15)], .3, -.42, 5),
+    ([(0, 0, 15), (1, 0, 15)], .3, .42, -5),
+    ([(0, 0, .1), (1, 0, 15)], .3, .42, 5)])
+def test_transfer_rejects_invalid_geometry_or_payload(route, mass, height, hover):
+    energy_planner, _ = planner()
+    with pytest.raises(ValueError):
+        energy_planner.plan_transfer(route, height, mass, hover)
+
+
+def test_px4_prediction_includes_loaded_startup_and_unloaded_landing_delays():
+    reference, parameters = planner()
+    parameters = parameters.for_backend("px4")
+    nominal = MissionEnergyPlanner(reference.waypoint_map, replace(
+        parameters, px4_startup_overhead_s=0.0, px4_landing_overhead_s=0.0
+    ))
+    px4 = MissionEnergyPlanner(reference.waypoint_map, parameters, "px4")
+    arguments = (["logistics_center"], "logistics_center", 0.42, True)
+    kwargs = dict(payload_masses_kg=[0.3], target_floors=[1])
+    base = nominal.plan(*arguments, **kwargs)
+    prediction = px4.plan(*arguments, **kwargs)
+    assert prediction.hover_seconds - base.hover_seconds == pytest.approx(30.0)
+    assert sum(s.duration_seconds for s in prediction.segments) - sum(
+        s.duration_seconds for s in base.segments
+    ) == pytest.approx(30.0)
+    assert prediction.segments[0].payload_mass_kg == pytest.approx(0.3)
+    assert prediction.segments[-1].payload_mass_kg == pytest.approx(0.0)
+    assert prediction.horizontal_distance_m == base.horizontal_distance_m
+    assert prediction.ascent_m == base.ascent_m
+    model = BatteryModel(parameters, 1.0)
+    assert model.estimate(prediction).estimated_mission_energy_wh > (
+        model.estimate(base).estimated_mission_energy_wh
+    )
+
+
+def test_px4_prediction_overheads_are_configurable():
+    reference, parameters = planner()
+    custom = replace(parameters, px4_startup_overhead_s=2.0,
+                     px4_landing_overhead_s=3.0)
+    arguments = (["teaching_building"], "teaching_building", 0.42, True)
+    base = MissionEnergyPlanner(reference.waypoint_map, replace(
+        parameters, px4_startup_overhead_s=0.0, px4_landing_overhead_s=0.0
+    )).plan(*arguments)
+    px4 = MissionEnergyPlanner(reference.waypoint_map, custom, "px4")
+    assert px4.plan(*arguments).hover_seconds - base.hover_seconds == 5.0
 
 
 def test_long_leg_uses_trapezoidal_motion_profile():
@@ -173,3 +242,17 @@ def test_higher_delivery_floor_requires_more_energy():
         model.estimate(high).estimated_mission_energy_wh
         > model.estimate(low).estimated_mission_energy_wh
     )
+
+
+def test_facade_departure_is_not_double_counted_in_energy_budget():
+    energy_planner, _ = planner()
+    updated = energy_planner.plan(
+        ["dormitory_2", "laboratory"], "", 0.0, True, target_floors=[11, 4]
+    )
+    energy_planner.waypoint_map.departure_nodes = {}
+    previous = energy_planner.plan(
+        ["dormitory_2", "laboratory"], "", 0.0, True, target_floors=[11, 4]
+    )
+    assert updated.horizontal_distance_m == pytest.approx(previous.horizontal_distance_m)
+    assert updated.ascent_m == pytest.approx(previous.ascent_m)
+    assert updated.descent_m == pytest.approx(previous.descent_m)

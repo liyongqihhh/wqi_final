@@ -1,0 +1,56 @@
+teaching_building:
+  x: -62.0
+  y: 48.0
+  yaw: 1.570796
+library:
+  x: -62.0
+  y: 22.0
+  yaw: 1.570796
+laboratory:
+  x: -25.0
+  y: 48.0
+  yaw: 1.570796
+innovation_center:
+  x: -25.0
+  y: 22.0
+  yaw: 1.570796
+dormitory_1:
+  x: 48.0
+  y: 38.0
+  yaw: -1.570796
+dormitory_2:
+  x: 72.0
+  y: 38.0
+  yaw: -1.570796
+dormitory_3:
+  x: 48.0
+  y: 42.0
+  yaw: 1.570796
+dormitory_4:
+  x: 72.0
+  y: 42.0
+  yaw: 1.570796
+cafeteria:
+  x: -5.0
+  y: -38.0
+  yaw: -1.570796
+gymnasium:
+  x: 36.0
+  y: -66.0
+  yaw: 1.570796
+logistics_center:
+  x: -56.0
+  y: -28.0
+  yaw: 1.570796
+depot_a:
+  x: -18.0
+  y: 22.0
+  yaw: 1.570796
+depot_b:
+  x: 28.0
+  y: 22.0
+  yaw: 1.570796
+depot_c:
+  x: 12.0
+  y: -33.0
+  yaw: 1.570796

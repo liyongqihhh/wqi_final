@@ -6,6 +6,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
     RegisterEventHandler,
+    Shutdown,
 )
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -64,7 +65,10 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(gazebo_ros_dir, "launch", "gazebo.launch.py")
         ),
-        launch_arguments={"world": world_path, "gui": gui, "verbose": "true"}.items(),
+        launch_arguments={
+            "world": world_path, "gui": gui, "verbose": "true",
+            "server_required": "true",
+        }.items(),
     )
 
     spawn_entity = Node(
@@ -97,6 +101,12 @@ def generate_launch_description():
         ],
         output="screen",
     )
+
+    def after_spawn(event, context):
+        if event.returncode != 0:
+            return [Shutdown(reason="UGV model spawn failed; inspect spawn_entity output.")]
+        return [spawn_controllers]
+
     return LaunchDescription(
         [
             DeclareLaunchArgument(
@@ -140,7 +150,7 @@ def generate_launch_description():
             RegisterEventHandler(
                 OnProcessExit(
                     target_action=spawn_entity,
-                    on_exit=[spawn_controllers],
+                    on_exit=after_spawn,
                 )
             ),
         ]

@@ -25,7 +25,9 @@ setup(
     license="Apache-2.0",
     entry_points={
         "console_scripts": [
-            "flight_controller = uav_control.flight_controller:main",
+            "px4_offboard_controller = uav_control.px4_offboard_controller:main",
+            "px4_battery_bridge = uav_control.px4_battery_bridge:main",
+            "odom_tf_publisher = uav_control.odom_tf_publisher:main",
             "flight_state_monitor = uav_control.flight_state_monitor:main",
             "safety_monitor = uav_control.safety_monitor:main",
             "battery_manager = uav_control.battery_manager:main",

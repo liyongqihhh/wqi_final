@@ -21,4 +21,5 @@ float32 payload_energy_penalty_wh
 float32 initial_payload_mass_kg
 float32 battery_capacity_wh
 float32 net_charge_power_w
+float32 estimated_duration_s
 string message

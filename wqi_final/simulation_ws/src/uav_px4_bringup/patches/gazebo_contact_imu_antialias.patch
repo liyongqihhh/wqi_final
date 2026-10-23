@@ -1,0 +1,43 @@
+diff --git a/include/gazebo_imu_plugin.h b/include/gazebo_imu_plugin.h
+--- a/include/gazebo_imu_plugin.h
++++ b/include/gazebo_imu_plugin.h
+@@ -142,5 +142,9 @@
+   ignition::math::Vector3d velocity_prev_W_;
+   bool contact_aware_acceleration_ = false;
++  ignition::math::Vector3d contact_acceleration_W_ = ignition::math::Vector3d::Zero;
++  double contact_acceleration_tau_ = 0.02;
++  ignition::math::Vector3d contact_velocity_delta_W_ = ignition::math::Vector3d::Zero;
++  double contact_previous_dt_ = 0.0;
+ 
+   Eigen::Vector3d gyroscope_bias_;
+   Eigen::Vector3d accelerometer_bias_;
+diff --git a/src/gazebo_imu_plugin.cpp b/src/gazebo_imu_plugin.cpp
+--- a/src/gazebo_imu_plugin.cpp
++++ b/src/gazebo_imu_plugin.cpp
+@@ -68,6 +68,9 @@
+ #if GAZEBO_MAJOR_VERSION >= 9
+   getSdfParam<bool>(_sdf, "contactAwareAcceleration",
+                     contact_aware_acceleration_, false);
++  getSdfParam<double>(_sdf, "contactAccelerationTimeConstant",
++                      contact_acceleration_tau_, 0.02);
++  assert(contact_acceleration_tau_ >= 0.0 && contact_acceleration_tau_ <= 0.1);
+   velocity_prev_W_ = link_->WorldLinearVel();
+ #endif
+ 
+@@ -289,6 +292,15 @@
+     const auto velocity_W = link_->WorldLinearVel();
++    // ODE contact contains sub-step chatter. Anti-alias the measured
++    // acceleration before MAVLink/PX4 downsamples the physics-rate IMU.
++    const auto delta_velocity_W = velocity_W - velocity_prev_W_;
++    const auto acceleration_W = (delta_velocity_W + contact_velocity_delta_W_)
++        / (dt + contact_previous_dt_);
++    contact_velocity_delta_W_ = delta_velocity_W;
++    contact_previous_dt_ = dt;
++    const double alpha = dt / (contact_acceleration_tau_ + dt);
++    contact_acceleration_W_ += alpha * (acceleration_W - contact_acceleration_W_);
+     acceleration_I = C_W_I.RotateVectorReverse(
+-        (velocity_W - velocity_prev_W_) / dt - gravity_W_);
++        contact_acceleration_W_ - gravity_W_);
+     velocity_prev_W_ = velocity_W;
+   }
+ 

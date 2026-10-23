@@ -52,6 +52,9 @@ class ExperimentRunner(Node):
             get_package_share_directory("campus_dynamic_obstacles")
         )
         self.declare_parameter("mode", "cooperative")
+        self.declare_parameter("flight_backend", "px4")
+        self.declare_parameter("route_policy", "energy_time")
+        self.declare_parameter("charge_policy", "as_needed")
         self.declare_parameter("scenario", "teaching_building")
         self.declare_parameter("repetitions", 1)
         self.declare_parameter("obstacle_density", "none")
@@ -545,6 +548,9 @@ class ExperimentRunner(Node):
                 ready, reason = self._wait_precondition()
                 run_id = (
                     f"{self.mode}-{self.scenario_name}-{self.obstacle_density}-"
+                    f"{self.get_parameter('flight_backend').value}-"
+                    f"{self.get_parameter('route_policy').value}-"
+                    f"{self.get_parameter('charge_policy').value}-"
                     f"{self.random_seed}-{repetition:03d}"
                 )
                 record = RunRecord(
@@ -555,6 +561,11 @@ class ExperimentRunner(Node):
                     obstacle_density=self.obstacle_density,
                     random_seed=self.random_seed,
                     targets=[item.name for item in self.scenario.deliveries],
+                    flight_backend=str(self.get_parameter("flight_backend").value),
+                    route_policy=(str(self.get_parameter("route_policy").value)
+                                  if self.mode == "cooperative" else "not_applicable"),
+                    charge_policy=(str(self.get_parameter("charge_policy").value)
+                                   if self.mode == "cooperative" else "not_applicable"),
                 )
                 self.metrics.start(record, self.get_clock().now().nanoseconds)
                 self.status_pub.publish(String(data=f"RUNNING:{run_id}"))

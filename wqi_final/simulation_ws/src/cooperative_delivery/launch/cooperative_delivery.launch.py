@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import os
+from pathlib import Path
+import tempfile
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -7,13 +9,53 @@ from launch.actions import (
     DeclareLaunchArgument,
     GroupAction,
     IncludeLaunchDescription,
+    OpaqueFunction,
+    SetLaunchConfiguration,
+    SetEnvironmentVariable,
     TimerAction,
+    RegisterEventHandler,
+    Shutdown,
 )
+from launch.event_handlers import OnProcessExit
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import (
+    EnvironmentVariable,
+    LaunchConfiguration,
+    PythonExpression,
+)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+
+
+def wait_before_uav(context, spawn):
+    if LaunchConfiguration("relay_docking").perform(context).lower() != "true":
+        return [spawn]
+    waiter = Node(package="cooperative_delivery", executable="wait_for_carrier_control",
+        name="wait_for_a_before_uav", output="screen", parameters=[{"use_sim_time": True}])
+    def finished(event, _context):
+        return [spawn] if event.returncode == 0 else [Shutdown(reason="A-car control initialization failed")]
+    return [RegisterEventHandler(OnProcessExit(target_action=waiter, on_exit=finished)), waiter]
+
+
+def prepare_px4_carrier(context):
+    if LaunchConfiguration("flight_backend").perform(context) != "px4":
+        return []
+    import xacro
+    from cooperative_delivery.px4_carrier_model import add_physical_deck
+
+    model_path = LaunchConfiguration("ugv_model").perform(context)
+    rays = LaunchConfiguration("visualize_sensor_rays").perform(context)
+    document = xacro.process_file(model_path, mappings={"visualize_sensor_rays": rays})
+    directory = Path(os.environ.get("WQI_BUILD_ROOT", "/tmp")) / "generated_models"
+    directory.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", prefix="px4_carrier_", suffix=".urdf",
+        dir=directory, delete=False,
+    ) as stream:
+        stream.write(add_physical_deck(document.toxml()))
+        generated = stream.name
+    return [SetLaunchConfiguration("ugv_model", generated)]
 
 
 def generate_launch_description():
@@ -25,6 +67,7 @@ def generate_launch_description():
     dynamic_obstacles_share = get_package_share_directory(
         "campus_dynamic_obstacles"
     )
+    px4_bringup_share = get_package_share_directory("uav_px4_bringup")
 
     ugv_sim_launch = os.path.join(
         ugv_description_share, "launch", "campus_delivery_sim.launch.py"
@@ -93,6 +136,11 @@ def generate_launch_description():
     random_seed = LaunchConfiguration("random_seed")
     obstacle_config_file = LaunchConfiguration("obstacle_config_file")
     mission_config = LaunchConfiguration("mission_config")
+    flight_backend = LaunchConfiguration("flight_backend")
+    px4_autopilot_dir = LaunchConfiguration("px4_autopilot_dir")
+    px4_selected = IfCondition(PythonExpression([
+        "'", flight_backend, "' == 'px4'"
+    ]))
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -106,6 +154,30 @@ def generate_launch_description():
             description="Start the combined UGV-UAV RViz view.",
         ),
         DeclareLaunchArgument("use_sim_time", default_value="true"),
+        DeclareLaunchArgument("start_mission_manager", default_value="true"),
+        DeclareLaunchArgument("start_ugv_energy_manager", default_value="true"),
+        DeclareLaunchArgument("relay_docking", default_value="false"),
+        DeclareLaunchArgument("nav2_params_file", default_value=nav2_params),
+        DeclareLaunchArgument("static_controller_frequency", default_value="20.0"),
+        DeclareLaunchArgument("bt_loop_duration", default_value="50"),
+        DeclareLaunchArgument("filter_info_package", default_value="nav2_map_server"),
+        DeclareLaunchArgument("filter_info_executable", default_value="costmap_filter_info_server"),
+        DeclareLaunchArgument("ugv_model", default_value=os.path.join(
+            ugv_description_share, "urdf", "ugvcar", "ugvcar.urdf.xacro")),
+        DeclareLaunchArgument(
+            "flight_backend", default_value="px4", choices=["px4"]
+        ),
+        DeclareLaunchArgument("route_policy", default_value="energy_time",
+                              choices=["input_order", "distance", "energy_time"]),
+        DeclareLaunchArgument("charge_policy", default_value="as_needed",
+                              choices=["full", "as_needed"]),
+        DeclareLaunchArgument(
+            "px4_autopilot_dir",
+            default_value=EnvironmentVariable(
+                "PX4_AUTOPILOT_DIR",
+                default_value="/home/wqi/design_final_artifacts/px4/PX4-Autopilot",
+            ),
+        ),
         DeclareLaunchArgument(
             "initial_battery_percentage",
             default_value="0.80",
@@ -160,10 +232,27 @@ def generate_launch_description():
             default_value="false",
             description="Show Gazebo UGV/UAV lidar rays; topics remain active when false.",
         ),
+        OpaqueFunction(function=prepare_px4_carrier),
+        SetEnvironmentVariable(
+            "GAZEBO_PLUGIN_PATH",
+            [px4_autopilot_dir, "/build/px4_sitl_default/build_gazebo-classic:",
+             EnvironmentVariable("GAZEBO_PLUGIN_PATH", default_value="")],
+            condition=px4_selected,
+        ),
+        SetEnvironmentVariable(
+            "GAZEBO_MODEL_PATH",
+            [px4_autopilot_dir,
+             "/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models:",
+             EnvironmentVariable("GAZEBO_MODEL_PATH", default_value="")],
+            condition=IfCondition(PythonExpression([
+                "'", flight_backend, "' == 'px4'"
+            ])),
+        ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(ugv_sim_launch),
             launch_arguments={
                 "gui": gui,
+                "model": LaunchConfiguration("ugv_model"),
                 "use_sim_time": use_sim_time,
                 "x": "0.0",
                 "y": "-43.5",
@@ -186,7 +275,11 @@ def generate_launch_description():
                                 "localization_mode": "ground_truth",
                                 "map": campus_map,
                                 "keepout_mask": keepout_mask,
-                                "params_file": nav2_params,
+                                "params_file": LaunchConfiguration("nav2_params_file"),
+                                "static_controller_frequency": LaunchConfiguration("static_controller_frequency"),
+                                "bt_loop_duration": LaunchConfiguration("bt_loop_duration"),
+                                "filter_info_package": LaunchConfiguration("filter_info_package"),
+                                "filter_info_executable": LaunchConfiguration("filter_info_executable"),
                                 "initial_x": "0.0",
                                 "initial_y": "-43.5",
                                 "initial_yaw": "1.5708",
@@ -205,7 +298,7 @@ def generate_launch_description():
         TimerAction(
             period=uav_spawn_delay,
             actions=[
-                IncludeLaunchDescription(
+                OpaqueFunction(function=wait_before_uav, kwargs={"spawn": IncludeLaunchDescription(
                     PythonLaunchDescriptionSource(uav_spawn_launch),
                     launch_arguments={
                         "use_sim_time": use_sim_time,
@@ -214,10 +307,29 @@ def generate_launch_description():
                         "z": "0.42",
                         "yaw": "1.5708",
                         "enable_docking": "true",
+                        "relay_docking": LaunchConfiguration("relay_docking"),
                         "visualize_sensor_rays": visualize_sensor_rays,
+                        "flight_backend": flight_backend,
+                        "px4_autopilot_dir": px4_autopilot_dir,
                     }.items(),
-                )
+                )})
             ],
+        ),
+        TimerAction(
+            period=PythonExpression([uav_spawn_delay, " + 5.0"]),
+            actions=[IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(os.path.join(
+                    px4_bringup_share, "launch", "px4_sitl.launch.py"
+                )),
+                condition=IfCondition(PythonExpression([
+                    "'", flight_backend, "' == 'px4'"
+                ])),
+                launch_arguments={
+                    "px4_autopilot_dir": px4_autopilot_dir,
+                    "enable_energy_constraints": enable_energy_constraints,
+                    "moving_base": "true",
+                }.items(),
+            )],
         ),
         TimerAction(
             period=uav_application_delay,
@@ -228,11 +340,15 @@ def generate_launch_description():
                     namespace="ugv",
                     name="energy_manager",
                     output="screen",
-                    condition=IfCondition(enable_energy_constraints),
+                    condition=IfCondition(PythonExpression([
+                        "'", enable_energy_constraints, "'.lower() == 'true' and '",
+                        LaunchConfiguration("start_ugv_energy_manager"), "'.lower() == 'true'",
+                    ])),
                     parameters=[
                         ugv_energy_config,
                         {
                             "use_sim_time": use_sim_time,
+                            "docked_uav_mass_kg": 1.535,
                             "initial_drive_percentage": ParameterValue(
                                 initial_ugv_drive_battery_percentage,
                                 value_type=float,
@@ -251,6 +367,9 @@ def generate_launch_description():
                         "initial_battery_percentage": initial_battery_percentage,
                         "enable_energy_constraints": enable_energy_constraints,
                         "external_charger_control": "true",
+                        "use_carrier_home": "true",
+                        "enable_sim_velocity_aiding": "true",
+                        "flight_backend": flight_backend,
                     }.items(),
                 )
             ],
@@ -261,6 +380,7 @@ def generate_launch_description():
                 Node(
                     package="cooperative_delivery",
                     executable="cooperative_mission_manager",
+                    condition=IfCondition(LaunchConfiguration("start_mission_manager")),
                     namespace="cooperative_delivery",
                     name="mission_manager",
                     output="screen",
@@ -271,6 +391,9 @@ def generate_launch_description():
                         ),
                         "mission_config": mission_config,
                         "ugv_energy_config": ugv_energy_config,
+                        "flight_backend": flight_backend,
+                        "route_policy": LaunchConfiguration("route_policy"),
+                        "charge_policy": LaunchConfiguration("charge_policy"),
                     }],
                 )
             ],

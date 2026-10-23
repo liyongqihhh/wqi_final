@@ -183,6 +183,40 @@ class PoseHistory:
         )
 
 
+class ScanPoseSynchronizer:
+    """Delay scans until measured poses bracket their sensor timestamp."""
+
+    def __init__(self, maximum_age=0.30, capacity=16):
+        self.maximum_age = float(maximum_age)
+        self.capacity = int(capacity)
+        self.pending = []
+
+    def add(self, timestamp, observation):
+        timestamp = float(timestamp)
+        if self.pending and timestamp < self.pending[-1][0]:
+            self.pending.clear()
+        self.pending.append((timestamp, observation))
+        self.pending = self.pending[-self.capacity:]
+
+    def ready(self, history, now):
+        ready = []
+        while self.pending:
+            timestamp, observation = self.pending[0]
+            if float(now) - timestamp > self.maximum_age:
+                self.pending.pop(0)
+                continue
+            if not history.samples:
+                break
+            if timestamp < history.samples[0].timestamp:
+                self.pending.pop(0)
+                continue
+            if timestamp > history.samples[-1].timestamp:
+                break
+            self.pending.pop(0)
+            ready.append(observation)
+        return ready
+
+
 def _distance(first, second) -> float:
     return math.hypot(first[0] - second[0], first[1] - second[1])
 
@@ -335,6 +369,8 @@ def choose_drivable_collision_risk(
     alternative_cost: float,
     blocked_cost: float,
     preference_margin: float,
+    robot_position: tuple[float, float] | None = None,
+    planning_direction: tuple[float, float] | None = None,
 ) -> CollisionRisk:
     """Select an alternate passing side only when its safe point is drivable."""
     costs = (primary_cost, alternative_cost, blocked_cost, preference_margin)
@@ -352,7 +388,28 @@ def choose_drivable_collision_risk(
         float(alternative_cost) + float(preference_margin)
         <= float(primary_cost)
     )
-    if alternate_is_open and (primary_is_blocked or clearly_better):
+    smaller_lane_change = False
+    if robot_position is not None and planning_direction is not None:
+        length = math.hypot(*planning_direction)
+        if length > 1.0e-6:
+            left = (-planning_direction[1] / length,
+                    planning_direction[0] / length)
+
+            def lateral_distance(point):
+                return abs(sum(
+                    (point[i] - robot_position[i]) * left[i]
+                    for i in range(2)
+                ))
+
+            smaller_lane_change = (
+                not primary_is_blocked
+                and abs(primary_cost - alternative_cost) < preference_margin
+                and lateral_distance(alternative.safe_point) + 0.25
+                < lateral_distance(primary.safe_point)
+            )
+    if alternate_is_open and (
+        primary_is_blocked or clearly_better or smaller_lane_change
+    ):
         return alternative
     return primary
 
@@ -967,11 +1024,14 @@ def calculate_collision_risk(
         base_clearance + 0.25,
     )
     safe_side_sign = -hazard_side_sign
+    # Guard width closes the hazard shoulder; the passing centre only needs
+    # the physical clearance. Conflating them rejects safe narrow-road lanes.
+    safe_side_offset = base_clearance + 0.05
     safe_point = (
         collision_point[0]
-        + safe_side_sign * effective_guard_side_offset * route_left[0],
+        + safe_side_sign * safe_side_offset * route_left[0],
         collision_point[1]
-        + safe_side_sign * effective_guard_side_offset * route_left[1],
+        + safe_side_sign * safe_side_offset * route_left[1],
     )
     lateral_sample_count = max(
         1,

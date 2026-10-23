@@ -67,6 +67,18 @@ TEST(PredictiveCollisionModel, RejectsInvalidHorizon)
     std::invalid_argument);
 }
 
+TEST(PredictiveCollisionModel, LongerHorizonRejectsWaitingForAnApproachingObstacle)
+{
+  const std::vector<TimedPoint2D> stationary{{0.0, 0.0, 0.0}, {0.0, 0.0, 8.0}};
+  const std::vector<MovingCircle2D> obstacles{{6.0, 0.0, -0.6, 0.0, 0.45}};
+  const auto short_result = ugvcar_navigation2::evaluatePredictiveCollision(
+    stationary, obstacles, 0.6, 0.3, 4.0);
+  const auto long_result = ugvcar_navigation2::evaluatePredictiveCollision(
+    stationary, obstacles, 0.6, 0.3, 8.0);
+  EXPECT_FALSE(std::isfinite(short_result.earliest_collision_time));
+  EXPECT_NEAR(long_result.earliest_collision_time, 7.75, 1.0e-6);
+}
+
 TEST(PredictiveCollisionModel, ScoresWideClearanceBelowMarginalClearance)
 {
   const ugvcar_navigation2::PredictiveCollisionResult wide{

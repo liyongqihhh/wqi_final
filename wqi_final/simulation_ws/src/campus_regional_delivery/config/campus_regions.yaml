@@ -1,0 +1,90 @@
+schema_version: 1
+frame_id: map
+world_bounds: {x_min: -90.0, x_max: 90.0, y_min: -80.0, y_max: 80.0}
+resolution: 0.2
+navigation:
+  vehicle_radius: 0.60
+  inflation_radius: 0.80
+  road_building_clearance: 1.0
+  road_edge_soft_width: 0.65
+  road_edge_soft_cost: 25
+flight:
+  cruise_altitude: 15.0
+  corridor_clearance: 2.5
+  landing_height: 0.42
+  ground_approach_height: 0.8
+  hover_seconds: 5.0
+  maximum_payload_kg: 1.0
+  ground_service_seconds: 5.0
+central_hub:
+  label: 中央物流中心
+  namespace: ugv_00
+  vehicle_label: UGV-00
+  color: [0.45, 0.50, 0.58, 1.0]
+  depot_pose: [-56.0, -28.0, 0.005, 1.570796]
+  model_name: logistics_center
+  building_center: [-56.0, -40.0]
+  uav_pad: [-56.0, -28.0, 0.425, 1.570796]
+  paved_size: [16.0, 8.0]
+regions:
+  A:
+    label: 教学科研区
+    bounds: [-78.0, -10.0, 18.0, 73.0]
+    color: [0.16, 0.48, 0.82, 1.0]
+    namespace: ugv_01
+    vehicle_label: UGV-01
+    depot_pose: [-18.0, 22.0, 0.005, 1.570796]
+    paved_size: [10.0, 8.0]
+    cargo_transfer: [-18.0, 19.0, 0.6]
+    sign_position: [-14.0, 18.0]
+    targets: [teaching_building, library, laboratory, innovation_center]
+  B:
+    label: 学生生活区
+    bounds: [40.0, 81.0, 20.0, 61.0]
+    color: [0.15, 0.65, 0.35, 1.0]
+    namespace: ugv_02
+    vehicle_label: UGV-02
+    depot_pose: [28.0, 22.0, 0.005, 1.570796]
+    paved_size: [10.0, 10.0]
+    cargo_transfer: [28.0, 19.0, 0.6]
+    sign_position: [32.0, 26.0]
+    targets: [dormitory_1, dormitory_2, dormitory_3, dormitory_4]
+  C:
+    label: 餐饮体育区
+    bounds: [-20.0, 62.0, -71.0, -36.0]
+    color: [0.82, 0.30, 0.18, 1.0]
+    namespace: ugv_03
+    vehicle_label: UGV-03
+    depot_pose: [12.0, -33.0, 0.005, 1.570796]
+    paved_size: [10.0, 6.0]
+    cargo_transfer: [15.0, -33.0, 0.6]
+    sign_position: [16.0, -32.0]
+    targets: [cafeteria, gymnasium]
+buildings:
+  teaching_building: {model_name: teaching_building, label: 教学楼, center: [-62.0, 62.0], delivery_pose: [-62.0, 48.0, 1.570796]}
+  library: {model_name: library, label: 图书馆, center: [-62.0, 35.0], delivery_pose: [-62.0, 22.0, 1.570796]}
+  laboratory: {model_name: laboratory_building, label: 实验楼, center: [-25.0, 62.0], delivery_pose: [-25.0, 48.0, 1.570796]}
+  innovation_center: {model_name: innovation_center, label: 创新中心, center: [-25.0, 35.0], delivery_pose: [-25.0, 22.0, 1.570796]}
+  dormitory_1: {model_name: dormitory_1, label: 宿舍1栋, center: [48.0, 28.0], delivery_pose: [48.0, 38.0, -1.570796]}
+  dormitory_2: {model_name: dormitory_2, label: 宿舍2栋, center: [72.0, 28.0], delivery_pose: [72.0, 38.0, -1.570796]}
+  dormitory_3: {model_name: dormitory_3, label: 宿舍3栋, center: [48.0, 52.0], delivery_pose: [48.0, 42.0, 1.570796]}
+  dormitory_4: {model_name: dormitory_4, label: 宿舍4栋, center: [72.0, 52.0], delivery_pose: [72.0, 42.0, 1.570796]}
+  cafeteria: {model_name: cafeteria, label: 食堂, center: [-5.0, -52.0], delivery_pose: [-5.0, -38.0, -1.570796]}
+  gymnasium: {model_name: gymnasium, label: 体育馆, center: [36.0, -52.0], delivery_pose: [36.0, -66.0, 1.570796]}
+roads:
+  - {name: main_ring, width: 7.0, closed: true, corner_radius: 6.0, points: [[-32.0, -28.0], [36.0, -28.0], [36.0, 12.0], [-32.0, 12.0]]}
+  - {name: academic_entry, width: 6.0, points: [[-26.0, 12.0], [-36.0, 16.0], [-43.0, 22.0]]}
+  - {name: academic_axis, width: 6.0, points: [[-43.0, 22.0], [-43.0, 48.0]]}
+  - {name: academic_south, width: 6.0, points: [[-62.0, 22.0], [-25.0, 22.0]]}
+  - {name: academic_north, width: 6.0, points: [[-62.0, 48.0], [-25.0, 48.0]]}
+  - {name: depot_a_access, width: 4.0, points: [[-36.0, 16.0], [-18.0, 22.0]]}
+  - {name: dormitory_entry, width: 6.0, points: [[30.0, 12.0], [36.0, 18.0], [60.0, 18.0], [60.0, 40.0]]}
+  - {name: dormitory_cross, width: 6.0, points: [[48.0, 40.0], [72.0, 40.0]]}
+  - {name: depot_b_access, width: 4.0, points: [[36.0, 18.0], [28.0, 22.0]]}
+  - {name: dormitory_1_3_access, width: 6.0, points: [[48.0, 38.0], [48.0, 42.0]]}
+  - {name: dormitory_2_4_access, width: 6.0, points: [[72.0, 38.0], [72.0, 42.0]]}
+  - {name: catering_entry, width: 6.0, points: [[0.0, -28.0], [0.0, -38.0]]}
+  - {name: catering_north, width: 6.0, points: [[-5.0, -38.0], [58.0, -38.0]]}
+  - {name: gymnasium_access, width: 6.0, points: [[58.0, -38.0], [58.0, -66.0], [36.0, -66.0]]}
+  - {name: depot_c_access, width: 4.0, points: [[12.0, -38.0], [12.0, -33.0]]}
+  - {name: central_hub_access, width: 6.0, points: [[-32.0, -18.0], [-56.0, -18.0], [-56.0, -28.0]]}

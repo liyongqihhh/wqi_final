@@ -24,6 +24,16 @@ def test_yaml_defines_two_independent_batteries():
     assert p.charging_reserve_wh == 25.0
 
 
+def test_explicit_uav_charger_input_counts_conversion_and_idle_losses():
+    p = parameters()
+    model = UgvEnergyModel(p, .8, .8)
+    model.step(60, 0, 0, 0, 0, True, 0, uav_charging_input_power_w=180)
+    expected = (180 / p.charger_transfer_efficiency + p.charger_idle_power_w) / 60
+    assert model.charging_consumed_wh == pytest.approx(expected)
+    with pytest.raises(ValueError):
+        model.step(1, 0, 0, 0, 0, True, 0, uav_charging_input_power_w=-1)
+
+
 def test_drive_power_increases_with_cargo_and_docked_uav_mass():
     model = UgvEnergyModel(parameters())
     empty = model.drive_power_w(0.22, 0.0, 0.0, 0.0, False)

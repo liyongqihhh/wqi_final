@@ -25,8 +25,14 @@ if(BUILD_TESTING)
 endif()
 
 
-install(DIRECTORY launch urdf config world scripts
+install(DIRECTORY launch urdf config world
   DESTINATION share/${PROJECT_NAME}
 )
 
 ament_package()
+
+if(BUILD_TESTING AND TEST xmllint)
+  # Keep schema validation enabled without downloading during offline tests.
+  set_tests_properties(xmllint PROPERTIES ENVIRONMENT
+    "XML_CATALOG_FILES=${CMAKE_CURRENT_SOURCE_DIR}/test/schema/catalog.xml")
+endif()

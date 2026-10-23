@@ -1,8 +1,9 @@
 <!--
   Dynamic-obstacle navigation checks path validity at 1 Hz and computes a new
   route when a prediction blocks the path or once whenever the active threat
-  count changes. The edge-triggered condition avoids retaining a long detour
-  without replacing the controller path every cycle.
+  count changes. A 5 s refresh also releases detours when occupancy changes
+  without a change in threat count. Valid paths change only for a meaningful
+  shortening. The local predictive controller stays active during replanning.
   Recovery never commands a scripted spin or reverse.
 -->
 <root main_tree_to_execute="MainTree">
@@ -12,20 +13,23 @@
         <RateController hz="1.0" name="DynamicPathReplanner">
           <Fallback name="ComputeWhenDynamicPathChanges">
             <ReactiveSequence name="KeepValidDynamicPath">
+              <SetBlackboard output_key="current_path_valid" value="false"/>
               <Inverter>
                 <GlobalUpdatedGoal/>
               </Inverter>
-              <IsPathValid path="{path}"/>
+              <TruncatePathLocal input_path="{path}" output_path="{validation_path}" distance_forward="1000.0" distance_backward="0.0"/>
+              <IsPathValid path="{validation_path}"/>
+              <SetBlackboard output_key="current_path_valid" value="true"/>
               <Inverter>
                 <DynamicObstacleChanged status_topic="/ugv/dynamic_replanning/status"/>
               </Inverter>
+              <Inverter>
+                <PathExpiringTimer seconds="5.0" path="{path}"/>
+              </Inverter>
             </ReactiveSequence>
-            <Sequence name="ComputeAndSmoothDynamicPath">
-              <ComputePathToPose goal="{goal}" path="{raw_path}" planner_id="GridBased"/>
-              <Fallback name="SmoothOrUseRawDynamicPath">
-                <SmoothPath unsmoothed_path="{raw_path}" smoothed_path="{path}" smoother_id="simple_smoother" max_smoothing_duration="0.2" check_for_collisions="true"/>
-                <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
-              </Fallback>
+            <Sequence name="ComputeStableDynamicPath">
+              <ComputePathToPose goal="{goal}" path="{candidate_path}" planner_id="GridBased"/>
+              <SelectStableDynamicPath candidate="{candidate_path}" current="{path}" current_valid="{current_path_valid}" selected="{path}"/>
             </Sequence>
             <!-- Dynamic occupancy can temporarily cover the exact goal. Keep
                  the previous controller path alive while D* Lite retries;
@@ -39,11 +43,7 @@
             <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
             <ClearEntireCostmap name="ClearGlobalCostmap-Controller" service_name="global_costmap/clear_entirely_global_costmap"/>
             <Wait name="WaitForFreshScans" wait_duration="0.5"/>
-            <ComputePathToPose goal="{goal}" path="{raw_path}" planner_id="GridBased"/>
-            <Fallback name="RecoverySmoothOrUseRawDynamicPath">
-              <SmoothPath unsmoothed_path="{raw_path}" smoothed_path="{path}" smoother_id="simple_smoother" max_smoothing_duration="0.2" check_for_collisions="true"/>
-              <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
-            </Fallback>
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
           </Sequence>
         </RecoveryNode>
       </PipelineSequence>

@@ -30,6 +30,9 @@ def launch_command(
     continue_on_failure: bool,
     initial_ugv_drive_battery_percentage: float = 0.80,
     initial_ugv_charging_battery_percentage: float = 0.80,
+    flight_backend: str = "px4",
+    route_policy: str = "energy_time",
+    charge_policy: str = "as_needed",
 ) -> list[str]:
     return [
         "ros2",
@@ -51,6 +54,9 @@ def launch_command(
         "gui:=false",
         "rviz:=false",
         "visualize_sensor_rays:=false",
+        f"flight_backend:={flight_backend}",
+        f"route_policy:={route_policy}",
+        f"charge_policy:={charge_policy}",
     ]
 
 
@@ -84,6 +90,9 @@ def main(args=None) -> None:
     )
     parser.add_argument("--seeds", default="42,43,44")
     parser.add_argument("--scenario", default="teaching_building")
+    parser.add_argument("--flight-backend", choices=("px4",), default="px4")
+    parser.add_argument("--energy-ablation", action="store_true",
+                        help="Compare input/full, distance/full, energy_time/as_needed.")
     parser.add_argument("--repetitions", type=int, default=1)
     parser.add_argument("--initial-battery", type=float, default=0.80)
     parser.add_argument("--initial-ugv-drive-battery", type=float, default=0.80)
@@ -103,6 +112,13 @@ def main(args=None) -> None:
     seeds = [int(value) for value in csv_values(options.seeds)]
     _validate(modes, VALID_MODES, "modes")
     _validate(densities, VALID_DENSITIES, "densities")
+    if options.energy_ablation and modes != ["cooperative"]:
+        raise ValueError("Energy ablation requires --modes cooperative")
+    if options.energy_ablation and options.repetitions != 1:
+        raise ValueError("Energy ablation requires repetitions=1; use seeds for fresh runs")
+    strategies = ([("input_order", "full"), ("distance", "full"),
+                   ("energy_time", "as_needed")] if options.energy_ablation
+                  else [("energy_time", "as_needed")])
     if not seeds:
         raise ValueError("At least one random seed is required")
     if options.repetitions <= 0:
@@ -130,10 +146,12 @@ def main(args=None) -> None:
             options.continue_on_failure,
             options.initial_ugv_drive_battery,
             options.initial_ugv_charging_battery,
+            options.flight_backend, route_policy, charge_policy,
         )
         for mode in modes
         for density in densities
         for seed in seeds
+        for route_policy, charge_policy in strategies
     ]
     print(
         f"Experiment matrix: {len(commands)} simulator batches, "

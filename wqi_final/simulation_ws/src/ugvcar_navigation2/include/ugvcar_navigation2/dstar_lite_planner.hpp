@@ -3,11 +3,13 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "nav2_core/global_planner.hpp"
+#include "nav_msgs/msg/occupancy_grid.hpp"
 #include "rclcpp_lifecycle/lifecycle_publisher.hpp"
 #include "std_msgs/msg/string.hpp"
 
@@ -34,9 +36,12 @@ public:
 private:
   bool costIsTraversable(std::uint8_t cost) const;
   std::optional<std::size_t> findTraversableCell(
-    unsigned int map_x, unsigned int map_y, double tolerance) const;
+    unsigned int map_x, unsigned int map_y, double tolerance,
+    const std::vector<std::uint8_t> & costs) const;
   std::optional<std::size_t> findGoalCell(
-    unsigned int goal_x, unsigned int goal_y) const;
+    unsigned int goal_x, unsigned int goal_y,
+    const std::vector<std::uint8_t> & costs) const;
+  void applyRoadFootprint(std::vector<std::uint8_t> & costs);
   void resetGridIfGeometryChanged();
   nav_msgs::msg::Path makePath(
     const geometry_msgs::msg::PoseStamped & start,
@@ -65,6 +70,12 @@ private:
   bool allow_unknown_{false};
   double cost_penalty_{3.0};
   int max_expansions_{1000000};
+  std::mutex road_mutex_;
+  nav_msgs::msg::OccupancyGrid::ConstSharedPtr road_mask_;
+  nav_msgs::msg::OccupancyGrid::ConstSharedPtr cached_road_mask_;
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr road_subscription_;
+  std::vector<bool> road_allowed_;
+  double road_radius_{0.0};
 };
 
 }  // namespace ugvcar_navigation2

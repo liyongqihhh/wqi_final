@@ -13,6 +13,7 @@ from dynamic_obstacle_prediction import (  # noqa: E402
     CollisionRiskLatch,
     DynamicObstacleTracker,
     PoseHistory,
+    ScanPoseSynchronizer,
     TrackedObstacle,
     body_to_world,
     calculate_collision_risk,
@@ -30,6 +31,39 @@ from dynamic_obstacle_prediction import (  # noqa: E402
     time_to_collision_boundary,
     world_to_body,
 )
+
+
+def test_scan_waits_for_measured_pose_instead_of_resetting_tracks():
+    history = PoseHistory()
+    history.add(1.0, (0.0, 0.0, 0.0))
+    sync = ScanPoseSynchronizer()
+    sync.add(1.124, "scan")
+    assert sync.ready(history, 1.124) == []
+    history.add(1.15, (0.15, 0.0, 0.0))
+    assert sync.ready(history, 1.15) == ["scan"]
+    assert history.pose_at(1.124)[0] == pytest.approx(0.124)
+
+
+def test_scan_queue_discards_expired_observations_without_extrapolation():
+    history = PoseHistory()
+    history.add(1.0, (0.0, 0.0, 0.0))
+    history.add(1.1, (0.1, 0.0, 0.0))
+    sync = ScanPoseSynchronizer()
+    sync.add(1.05, "expired")
+    sync.add(1.11, "future")
+    assert sync.ready(history, 1.4) == []
+    history.add(1.15, (0.15, 0.0, 0.0))
+    assert sync.ready(history, 1.4) == ["future"]
+
+
+def test_scan_queue_is_bounded_during_pose_loss():
+    sync = ScanPoseSynchronizer(capacity=2)
+    for i in range(4):
+        sync.add(1.0 + .01 * i, i)
+    history = PoseHistory()
+    history.add(1.0, (0.0, 0.0, 0.0))
+    history.add(1.1, (0.1, 0.0, 0.0))
+    assert sync.ready(history, 1.1) == [2, 3]
 
 
 def test_scan_clustering_covers_front_and_rear_obstacles():
@@ -115,6 +149,25 @@ def test_plan_goal_change_ignores_periodic_replans_to_same_goal():
     assert plan_goal_changed((), previous) is True
     assert plan_goal_changed(previous, ((1.0, 0.0), (10.2, 5.1))) is False
     assert plan_goal_changed(previous, ((1.0, 0.0), (12.0, 5.0))) is True
+
+
+def test_narrow_road_prefers_nearer_open_passing_lane():
+    primary = replace(
+        _risk(_track(40, 2.0, 0.0, -0.50, 0.0)),
+        avoidance_side="right", safe_point=(79.4, 35.0),
+    )
+    alternative = replace(
+        primary, avoidance_side="left", safe_point=(76.6, 35.0),
+    )
+    assert choose_drivable_collision_risk(
+        primary, alternative, 35.0, 35.0, 65.0, 15.0,
+        robot_position=(77.3, 30.0), planning_direction=(0.0, 1.0),
+    ) is alternative
+    # A smaller manoeuvre cannot override an impassable road edge.
+    assert choose_drivable_collision_risk(
+        primary, alternative, 35.0, 100.0, 65.0, 15.0,
+        robot_position=(77.3, 30.0), planning_direction=(0.0, 1.0),
+    ) is primary
 
 
 def test_body_world_transforms_are_inverse():
@@ -325,7 +378,7 @@ def test_head_on_speed_creates_safe_distance_and_front_risk_point():
     assert risk.time_to_collision == pytest.approx(5.73611111)
     assert risk.closest_distance == pytest.approx(0.0)
     assert risk.collision_point[0] == pytest.approx(1.52777778)
-    assert risk.safe_point == pytest.approx((1.52777778, -1.20))
+    assert risk.safe_point == pytest.approx((1.52777778, -0.92))
     assert risk.avoidance_side == "right"
     assert risk.guard_points[0] == pytest.approx((5.0, 0.0))
     assert _guard_centers(risk)[-1][0] < risk.collision_point[0]

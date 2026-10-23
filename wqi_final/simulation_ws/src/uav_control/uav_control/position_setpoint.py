@@ -61,3 +61,27 @@ def adaptive_position_setpoint(
         limited_position_setpoint(current_point, target_point, maximum_step),
         approaching,
     )
+
+
+def vertical_position_setpoint(
+    current, target, horizontal_speed, cruise_step, approach_step,
+    slowdown_distance, alignment_tolerance=0.2, alignment_speed=0.2,
+):
+    """Brake/align XY before changing Z, then hold a fixed vertical column."""
+    position = _point3(current, "current")
+    destination = _point3(target, "target")
+    if (
+        math.hypot(destination[0] - position[0], destination[1] - position[1])
+        > alignment_tolerance
+        or horizontal_speed > alignment_speed
+    ):
+        point, _ = adaptive_position_setpoint(
+            position, (destination[0], destination[1], position[2]),
+            cruise_step, approach_step, slowdown_distance,
+        )
+        return point, "ALIGNING_FOR_VERTICAL"
+    point, _ = adaptive_position_setpoint(
+        (destination[0], destination[1], position[2]), destination,
+        cruise_step, approach_step, slowdown_distance,
+    )
+    return point, "VERTICAL"

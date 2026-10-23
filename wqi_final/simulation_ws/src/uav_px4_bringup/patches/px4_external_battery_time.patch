@@ -1,0 +1,13 @@
+diff --git a/src/modules/mavlink/mavlink_receiver.cpp b/src/modules/mavlink/mavlink_receiver.cpp
+--- a/src/modules/mavlink/mavlink_receiver.cpp
++++ b/src/modules/mavlink/mavlink_receiver.cpp
+@@ -1803,6 +1803,9 @@ MavlinkReceiver::handle_message_battery_status(mavlink_message_t *msg)
+ 	battery_status_s battery_status{};
+ 	battery_status.timestamp = hrt_absolute_time();
+ 
++	// External BATTERY_STATUS does not supply a usable flight-time estimate.
++	battery_status.time_remaining_s = NAN;
++
+ 	float voltage_sum = 0.0f;
+ 	uint8_t cell_count = 0;
+ 

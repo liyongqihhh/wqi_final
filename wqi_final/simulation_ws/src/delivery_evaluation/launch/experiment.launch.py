@@ -95,6 +95,7 @@ def _launch_setup(context):
                 "initial_battery_percentage": initial_soc,
                 "enable_energy_constraints": "true",
                 "visualize_sensor_rays": rays,
+                "flight_backend": LaunchConfiguration("flight_backend"),
             },
         ))
         obstacle_delay = 20.0
@@ -117,6 +118,9 @@ def _launch_setup(context):
                 "obstacle_density": LaunchConfiguration("obstacle_density"),
                 "random_seed": LaunchConfiguration("random_seed"),
                 "visualize_sensor_rays": rays,
+                "flight_backend": LaunchConfiguration("flight_backend"),
+                "route_policy": LaunchConfiguration("route_policy"),
+                "charge_policy": LaunchConfiguration("charge_policy"),
             },
         ))
         runner_delay = 60.0
@@ -146,6 +150,9 @@ def _launch_setup(context):
         parameters=[{
             "use_sim_time": use_sim_time,
             "mode": LaunchConfiguration("mode"),
+            "flight_backend": LaunchConfiguration("flight_backend"),
+            "route_policy": LaunchConfiguration("route_policy"),
+            "charge_policy": LaunchConfiguration("charge_policy"),
             "scenario": LaunchConfiguration("scenario"),
             "repetitions": LaunchConfiguration("repetitions"),
             "obstacle_density": LaunchConfiguration("obstacle_density"),
@@ -165,6 +172,10 @@ def _launch_setup(context):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("mode", default_value="cooperative"),
+        DeclareLaunchArgument("flight_backend", default_value="px4", choices=["px4"]),
+        DeclareLaunchArgument("route_policy", default_value="energy_time",
+                              choices=["input_order", "distance", "energy_time"]),
+        DeclareLaunchArgument("charge_policy", default_value="as_needed", choices=["full", "as_needed"]),
         DeclareLaunchArgument("scenario", default_value="teaching_building"),
         DeclareLaunchArgument("repetitions", default_value="1"),
         DeclareLaunchArgument("obstacle_density", default_value="none"),

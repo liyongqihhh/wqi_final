@@ -51,16 +51,21 @@ def test_dynamic_behavior_tree_refreshes_route_on_threat_state_change():
     rate = root.find(".//RateController[@name='DynamicPathReplanner']")
     assert rate is not None
     assert float(rate.attrib["hz"]) == 1.0
-    assert root.find(".//PathExpiringTimer") is None
+    timer = root.find(".//PathExpiringTimer")
+    assert timer is not None
+    assert float(timer.attrib["seconds"]) == 5.0
+    assert root.find(".//SelectStableDynamicPath") is not None
+    assert root.find(".//CancelControl") is None
+    assert root.find(".//PathLongerOnApproach") is None
+    validator = root.find(".//TruncatePathLocal[@output_path='{validation_path}']")
+    assert float(validator.attrib["distance_backward"]) == 0.0
     change_condition = root.find(".//DynamicObstacleChanged")
     assert change_condition is not None
     assert change_condition.attrib["status_topic"] == (
         "/ugv/dynamic_replanning/status"
     )
     smoothers = root.findall(".//SmoothPath")
-    assert len(smoothers) == 2
-    assert all(node.attrib["smoother_id"] == "simple_smoother" for node in smoothers)
-    assert all(node.attrib["check_for_collisions"] == "true" for node in smoothers)
+    assert smoothers == []
 
     monitor_branches = list(rate)
     assert len(monitor_branches) == 1
@@ -72,13 +77,8 @@ def test_dynamic_behavior_tree_refreshes_route_on_threat_state_change():
     assert conditional.find("./AlwaysSuccess") is not None
 
     computes = root.findall(".//ComputePathToPose")
-    assert len(computes) == 4
-    assert root.find(
-        ".//Fallback[@name='SmoothOrUseRawDynamicPath']"
-    ) is not None
-    assert root.find(
-        ".//Fallback[@name='RecoverySmoothOrUseRawDynamicPath']"
-    ) is not None
+    assert len(computes) == 2
+    assert [node.attrib["path"] for node in computes] == ["{candidate_path}", "{path}"]
     controller_recovery = root.find(
         ".//Sequence[@name='RefreshAndReplan']"
     )
@@ -88,7 +88,6 @@ def test_dynamic_behavior_tree_refreshes_route_on_threat_state_change():
         "ClearEntireCostmap",
         "Wait",
         "ComputePathToPose",
-        "Fallback",
     ]
     assert root.find(".//Spin") is None
     assert root.find(".//BackUp") is None
@@ -115,16 +114,23 @@ def test_costmaps_detect_dynamic_obstacles_before_collision():
     assert follow_path["allow_reversing"] is False
     assert follow_path["debug_trajectory_details"] is False
     assert follow_path["sim_period"] == 0.10
+    assert follow_path["trajectory_generator_name"] == "dwb_plugins::StandardTrajectoryGenerator"
+    assert follow_path["limit_vel_cmd_in_traj"] is False
+    assert follow_path["include_last_point"] is True
+    assert follow_path["forward_prune_distance"] > (
+        follow_path["sim_time"] * follow_path["max_vel_x"]
+    )
     assert follow_path["vx_samples"] == 7
-    assert 7 <= follow_path["vtheta_samples"] <= 11
+    assert follow_path["vtheta_samples"] >= 31
     assert follow_path["linear_granularity"] >= 0.10
     assert follow_path["angular_granularity"] >= 0.05
-    assert follow_path["sim_time"] >= 4.0
+    assert follow_path["sim_time"] >= 8.0
+    assert "ObstacleFootprint" in follow_path["critics"]
     assert follow_path["short_circuit_trajectory_evaluation"] is False
     assert "PredictiveCollision" in follow_path["critics"]
     assert "PathHeading" in follow_path["critics"]
     assert follow_path["PredictiveCollision.scale"] >= 1000000.0
-    assert follow_path["PredictiveCollision.prediction_horizon"] >= 4.0
+    assert follow_path["PredictiveCollision.prediction_horizon"] >= 8.0
     assert follow_path["PredictiveCollision.safety_margin"] == 0.30
     assert follow_path["PredictiveCollision.preferred_clearance"] == 0.45
     assert 0.0 < follow_path["PredictiveCollision.clearance_weight"] < 0.001
@@ -132,12 +138,13 @@ def test_costmaps_detect_dynamic_obstacles_before_collision():
         "/ugv/tracked_dynamic_obstacles"
     )
     assert follow_path["PathHeading.activation_linear_velocity"] <= 0.08
-    assert follow_path["PathHeading.activation_angle"] >= 0.7
+    assert follow_path["PathHeading.activation_angle"] <= 0.2
 
     planner = data["planner_server"]["ros__parameters"]["GridBased"]
     assert planner["lethal_cost"] == 253
     assert planner["cost_penalty"] > 0.0
     assert planner["max_expansions"] >= 1000000
+    assert planner["road_boundary_margin"] >= 0.15
 
     smoother = data["velocity_smoother"]["ros__parameters"]
     assert smoother["max_velocity"][0] == 0.40
@@ -280,6 +287,7 @@ def test_stage_six_selects_sensor_driven_dynamic_replanning():
     assert "dynamic_planner_tolerance" in launch_text
     assert "controller_server.ros__parameters.controller_frequency" in launch_text
     assert "dynamic_global_planner_plugin" in launch_text
+    assert "smoother_server.ros__parameters.simple_smoother.plugin" not in launch_text
     assert "dynamic_failure_tolerance" in launch_text
     assert "dynamic_progress_allowance" in launch_text
     assert '"3.0 if \'"' in launch_text
@@ -327,6 +335,9 @@ def test_stage_six_selects_sensor_driven_dynamic_replanning():
     assert 'declare_parameter("risk_release_distance", 3.50)' in predictor_text
     assert 'declare_parameter("enable_near_escape_gate", False)' in predictor_text
     assert "/ugv/tracked_dynamic_obstacles" in predictor_text
+    assert 'create_subscription(Path, "/received_global_plan"' in predictor_text
+    assert 'create_subscription(Path, "/plan"' not in predictor_text
+    assert "self.scan_synchronizer.ready(self.pose_history, now)" in predictor_text
     assert "DynamicObstacleArray" in predictor_text
     params_text = (
         PACKAGE_ROOT / "config" / "nav2_params.yaml"
@@ -349,6 +360,15 @@ def test_stage_six_selects_sensor_driven_dynamic_replanning():
     assert '"robot_radius": robot_radius' in launch_text
     assert "campus_local_keepout_mask.yaml" in launch_text
     assert "campus_dynamic_keepout_mask.yaml" in launch_text
+    assert '"global_costmap.global_costmap.ros__parameters.track_unknown_space"' in launch_text
+    assert launch_text.count("inflation_layer.inflate_around_unknown") == 2
+    assert "self._passing_footprint_cost(risk.safe_point)" in predictor_text
+    assert 'declare_parameter("global_prediction_horizon", 1.0)' in predictor_text
+    assert 'declare_parameter("global_prediction_maximum_distance", 0.45)' in predictor_text
+    assert (
+        "for risk in active_risks\n            for point in risk.guard_points"
+        not in predictor_text
+    )
     assert "/local_costmap_filter_info" in launch_text
     assert "/global_costmap_filter_info" in launch_text
     assert launch_text.count("ros__parameters.robot_radius") == 2

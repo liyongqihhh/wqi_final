@@ -4,11 +4,55 @@
 
 #include "behaviortree_cpp_v3/bt_factory.h"
 #include "behaviortree_cpp_v3/condition_node.h"
+#include "behaviortree_cpp_v3/action_node.h"
+#include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "ugvcar_navigation2/dynamic_path_policy.hpp"
 
 namespace ugvcar_navigation2
 {
+
+class SelectStableDynamicPath : public BT::SyncActionNode
+{
+public:
+  SelectStableDynamicPath(const std::string & name, const BT::NodeConfiguration & configuration)
+  : BT::SyncActionNode(name, configuration) {}
+
+  static BT::PortsList providedPorts()
+  {
+    return {
+      BT::InputPort<nav_msgs::msg::Path>("candidate"),
+      BT::InputPort<nav_msgs::msg::Path>("current"),
+      BT::InputPort<bool>("current_valid", false, "Whether the remaining accepted path is valid"),
+      BT::OutputPort<nav_msgs::msg::Path>("selected")
+    };
+  }
+
+  BT::NodeStatus tick() override
+  {
+    nav_msgs::msg::Path candidate;
+    nav_msgs::msg::Path current;
+    bool current_valid = false;
+    if (!getInput("candidate", candidate) || candidate.poses.empty()) {
+      return BT::NodeStatus::FAILURE;
+    }
+    getInput("current", current);
+    getInput("current_valid", current_valid);
+    const auto points = [](const nav_msgs::msg::Path & path) {
+        PathPoints result;
+        result.reserve(path.poses.size());
+        for (const auto & pose : path.poses) {
+          result.emplace_back(pose.pose.position.x, pose.pose.position.y);
+        }
+        return result;
+      };
+    setOutput(
+      "selected", shouldReplaceDynamicPath(
+        points(current), points(candidate), current_valid) ? candidate : current);
+    return BT::NodeStatus::SUCCESS;
+  }
+};
 
 class DynamicObstacleChangedCondition : public BT::ConditionNode
 {
@@ -108,6 +152,8 @@ private:
 
 BT_REGISTER_NODES(factory)
 {
+  factory.registerNodeType<ugvcar_navigation2::SelectStableDynamicPath>(
+    "SelectStableDynamicPath");
   factory.registerNodeType<ugvcar_navigation2::DynamicObstacleChangedCondition>(
     "DynamicObstacleChanged");
   factory.registerNodeType<ugvcar_navigation2::DynamicObstacleChangedCondition>(

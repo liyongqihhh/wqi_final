@@ -1,0 +1,70 @@
+flight:
+  home: logistics_center
+  takeoff_altitude: 1.5
+  cruise_altitude: 15.0
+  minimum_corridor_altitude: 8.0
+  maximum_corridor_altitude: 20.0
+  maximum_delivery_altitude: 42.0
+  first_floor_altitude: 1.6
+  floor_height: 3.2
+  delivery_altitude: 1.6
+  landing_approach_altitude: 0.8
+  takeoff_hover_duration: 5.0
+  delivery_hover_duration: 5.0
+  position_tolerance: 0.4
+  segment_timeout: 240.0
+  maximum_obstacle_height: 41.6
+  safety_margin: 2.5
+waypoints:
+  logistics_center:
+    x: -56.0
+    y: -28.0
+    yaw: 0.0
+    label: logistics_center
+    maximum_floor: 4
+    delivery_floor: 1
+    payload_mass_kg: 0.3
+  depot_a:
+    x: -18.0
+    y: 22.0
+    yaw: 1.570796
+    label: depot_a
+    maximum_floor: 1
+    delivery_floor: 1
+    payload_mass_kg: 0.3
+  depot_b:
+    x: 28.0
+    y: 22.0
+    yaw: 1.570796
+    label: depot_b
+    maximum_floor: 1
+    delivery_floor: 1
+    payload_mass_kg: 0.3
+  depot_c:
+    x: 12.0
+    y: -33.0
+    yaw: 1.570796
+    label: depot_c
+    maximum_floor: 1
+    delivery_floor: 1
+    payload_mass_kg: 0.3
+corridor_nodes:
+  logistics_center:
+    x: -56.0
+    y: -28.0
+  depot_a:
+    x: -18.0
+    y: 22.0
+  depot_b:
+    x: 28.0
+    y: 22.0
+  depot_c:
+    x: 12.0
+    y: -33.0
+corridor_edges:
+- - logistics_center
+  - depot_a
+- - logistics_center
+  - depot_b
+- - logistics_center
+  - depot_c

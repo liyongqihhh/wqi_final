@@ -7,6 +7,7 @@
 #include "pluginlib/class_list_macros.hpp"
 
 #include "ugvcar_navigation2/path_heading_model.hpp"
+#include "ugvcar_navigation2/dynamic_path_policy.hpp"
 
 namespace ugvcar_navigation2
 {
@@ -59,18 +60,16 @@ bool PathHeadingCritic::prepare(
     return true;
   }
 
-  const geometry_msgs::msg::Pose2D * target = &global_plan.poses.back();
+  PathPoints points;
+  points.reserve(global_plan.poses.size());
   for (const auto & path_pose : global_plan.poses) {
-    if (
-      std::hypot(path_pose.x - pose.x, path_pose.y - pose.y) >=
-      lookahead_distance_)
-    {
-      target = &path_pose;
-      break;
-    }
+    points.emplace_back(path_pose.x, path_pose.y);
   }
-  const double dx = target->x - pose.x;
-  const double dy = target->y - pose.y;
+  // Pruned plans still contain points behind the vehicle. Select forward arc
+  // length from its nearest projection, not the first distant historical pose.
+  const auto target = forwardPathTarget(points, {pose.x, pose.y}, lookahead_distance_);
+  const double dx = target.first - pose.x;
+  const double dy = target.second - pose.y;
   if (std::hypot(dx, dy) < 1.0e-3) {
     return true;
   }

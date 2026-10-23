@@ -9,6 +9,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/FlyToPose.action"
   "action/ExecuteDelivery.action"
   "srv/CheckDeliveryEnergy.srv"
+  "srv/SelectCarrier.srv"
   DEPENDENCIES geometry_msgs
 )
 

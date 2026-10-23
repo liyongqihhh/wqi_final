@@ -1,0 +1,5 @@
+<library path="peer_vehicle_layer">
+  <class type="cooperative_delivery::PeerVehicleLayer" base_class_type="nav2_costmap_2d::Layer">
+    <description>Current fleet vehicle envelope with old-position clearing.</description>
+  </class>
+</library>

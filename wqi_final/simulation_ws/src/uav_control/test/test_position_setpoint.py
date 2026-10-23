@@ -5,6 +5,7 @@ import pytest
 from uav_control.position_setpoint import (
     adaptive_position_setpoint,
     limited_position_setpoint,
+    vertical_position_setpoint,
 )
 
 
@@ -61,3 +62,23 @@ def test_adaptive_setpoint_rejects_approach_step_above_cruise_step():
             approach_step=0.6,
             slowdown_distance=4.0,
         )
+
+
+@pytest.mark.parametrize("target_z", [8.0, 33.6])
+def test_vertical_setpoint_holds_xy_and_only_steps_z(target_z):
+    point, phase = vertical_position_setpoint(
+        (42.1, 8.4, 15.0), (42.0, 8.5, target_z), 0.05, 2.0, 0.6, 4.0
+    )
+    assert point[:2] == (42.0, 8.5)
+    assert abs(point[2] - 15.0) <= 2.0
+    assert phase == "VERTICAL"
+
+
+@pytest.mark.parametrize("current,speed", [((42.4, 8.5, 15.0), 0.0),
+                                         ((42.0, 8.5, 15.0), 0.4)])
+def test_vertical_setpoint_aligns_and_brakes_before_changing_height(current, speed):
+    point, phase = vertical_position_setpoint(
+        current, (42.0, 8.5, 33.6), speed, 2.0, 0.6, 4.0
+    )
+    assert point[2] == 15.0
+    assert phase == "ALIGNING_FOR_VERTICAL"

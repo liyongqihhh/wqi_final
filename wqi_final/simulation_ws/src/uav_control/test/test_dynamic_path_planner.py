@@ -3,6 +3,7 @@ import math
 import pytest
 
 from uav_control.dynamic_path_planner import (
+    ObstacleClosingSpeed,
     path_lookahead_point,
     plan_dynamic_path,
     vector_in_map_frame,
@@ -64,12 +65,84 @@ def test_close_rear_obstacle_changes_forward_path_without_reversing():
         current=(0.0, 0.0, 15.0),
         target=(20.0, 0.0, 15.0),
         obstacle_vector_body=(-3.0, 0.0, 0.0),
+        rear_closing_speed=1.0,
         **COMMON,
     )
     assert plan.avoiding is True
     assert plan.reason == "rear_dynamic_obstacle"
     assert min(point[0] for point in plan.points) >= -1.0e-9
     assert max(abs(point[1]) for point in plan.points) > 1.0
+
+
+def test_stationary_facade_behind_departure_does_not_trigger_detour():
+    plan = plan_dynamic_path(
+        current=(42.0, 8.5, 33.6), target=(30.0, 11.0, 33.6),
+        obstacle_vector_body=(0.0, -3.5, 0.0), rear_closing_speed=-0.2,
+        **COMMON,
+    )
+    assert not plan.avoiding
+    assert all(point[2] == pytest.approx(33.6) for point in plan.points)
+
+
+@pytest.mark.parametrize("start_z,end_z", [(15.0, 33.6), (33.6, 15.0)])
+def test_clear_vertical_column_next_to_facade_stays_straight(start_z, end_z):
+    settings = dict(COMMON, maximum_altitude=45.0)
+    plan = plan_dynamic_path(
+        current=(42.0, 8.5, start_z), target=(42.0, 8.5, end_z),
+        obstacle_vector_body=(0.0, -3.5, -0.5), **settings,
+    )
+    assert not plan.avoiding
+    assert all(point[:2] == pytest.approx((42.0, 8.5)) for point in plan.points)
+
+
+@pytest.mark.parametrize("start_z,end_z", [(3.0, 15.0), (15.0, 3.0)])
+@pytest.mark.parametrize("wall_distance", [2.35, 2.45, 2.50, 2.65])
+def test_logistics_wall_does_not_interrupt_vertical_column(
+    start_z, end_z, wall_distance,
+):
+    settings = dict(COMMON, clearance=2.2)
+    plan = plan_dynamic_path(
+        current=(0.08, -43.42, start_z), target=(0.0, -43.5, end_z),
+        obstacle_vector_body=(0.1, -wall_distance, 0.15), **settings,
+    )
+    assert not plan.avoiding
+    assert all(abs(point[0]) <= 0.08 for point in plan.points)
+    assert all(-43.5 <= point[1] <= -43.42 for point in plan.points)
+
+
+@pytest.mark.parametrize("obstacle", [(0.0, 0.0, 4.0), (0.0, -1.7, 0.0)])
+def test_vertical_column_keeps_overhead_and_close_side_obstacle_protection(obstacle):
+    plan = plan_dynamic_path(
+        current=(0.0, -43.5, 3.0), target=(0.0, -43.5, 15.0),
+        obstacle_vector_body=obstacle, **dict(COMMON, clearance=2.2),
+    )
+    assert plan.avoiding
+
+
+def test_horizontal_cruise_retains_wider_wall_buffer():
+    plan = plan_dynamic_path(
+        current=(0.0, -43.5, 3.0), target=(15.0, -43.5, 3.0),
+        obstacle_vector_body=(4.0, -2.4, 0.0), **COMMON,
+    )
+    assert plan.avoiding
+
+
+def test_obstacle_inside_clearance_is_not_ignored_when_retreating():
+    plan = plan_dynamic_path(
+        current=(0.0, 0.0, 15.0), target=(20.0, 0.0, 15.0),
+        obstacle_vector_body=(-1.0, 0.0, 0.0), **COMMON,
+    )
+    assert plan.avoiding
+
+
+def test_closing_speed_distinguishes_approaching_and_receding_returns():
+    tracker = ObstacleClosingSpeed()
+    assert tracker.update((-4.0, 0.0, 0.0), 1.0) == 0.0
+    assert tracker.update((-3.0, 0.0, 0.0), 1.5) > 0.2
+    tracker = ObstacleClosingSpeed()
+    tracker.update((-3.0, 0.0, 0.0), 1.0)
+    assert tracker.update((-4.0, 0.0, 0.0), 1.5) < 0.0
+    assert tracker.update((-4.0, 0.0, 0.0), 1.5) < 0.0
 
 
 def test_rear_return_does_not_pull_uav_away_from_a_nearby_target():

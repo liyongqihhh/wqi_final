@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+import sys
+from campus_regional_delivery.container_guard import main
+
+sys.exit(main())

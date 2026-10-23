@@ -1,0 +1,6 @@
+# Change the capture target only while the UAV is detached.
+string model_name
+string link_name
+---
+bool success
+string message

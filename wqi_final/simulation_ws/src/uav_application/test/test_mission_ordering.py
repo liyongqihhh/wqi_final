@@ -24,6 +24,7 @@ def test_uav_route_optimization_keeps_floor_and_payload_mapping():
     manager = SimpleNamespace(
         waypoint_map=waypoint_map,
         energy_planner=_PayloadResolver(),
+        _carrier_home=lambda home, required=False: home,
     )
     requested_names = ["library", "teaching_building", "laboratory"]
     requested_floors = [5, 2, 7]

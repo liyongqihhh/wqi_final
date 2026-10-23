@@ -50,6 +50,7 @@ def generate_launch_description():
     )
     nav2_param_path = LaunchConfiguration("params_file")
     use_rviz = LaunchConfiguration("rviz")
+    rviz_software_rendering = LaunchConfiguration("rviz_software_rendering")
     localization_mode = LaunchConfiguration("localization_mode")
     initial_x = LaunchConfiguration("initial_x")
     initial_y = LaunchConfiguration("initial_y")
@@ -61,7 +62,8 @@ def generate_launch_description():
     dynamic_controller_frequency = PythonExpression([
         "10.0 if '",
         dynamic_obstacles,
-        "'.lower() in ('true', '1', 'yes') else 20.0",
+        "'.lower() in ('true', '1', 'yes') else ",
+        LaunchConfiguration("static_controller_frequency"),
     ])
     dynamic_local_inflation_radius = PythonExpression([
         "0.65 if '",
@@ -183,9 +185,26 @@ def generate_launch_description():
     configured_nav2_params = RewrittenYaml(
         source_file=nav2_param_path,
         param_rewrites={
+            # The dynamic keepout mask already bounds the recoverable shoulder.
+            # Inflating map-unknown grass closes that shoulder a second time.
+            "global_costmap.global_costmap.ros__parameters.track_unknown_space": (
+                PythonExpression(["'", dynamic_obstacles, "'.lower() not in ('true', '1', 'yes')"])
+            ),
+            (
+                "global_costmap.global_costmap.ros__parameters."
+                "inflation_layer.inflate_around_unknown"
+            ): (
+                PythonExpression(["'", dynamic_obstacles, "'.lower() not in ('true', '1', 'yes')"])
+            ),
+            "local_costmap.local_costmap.ros__parameters.inflation_layer.inflate_around_unknown": (
+                PythonExpression(["'", dynamic_obstacles, "'.lower() not in ('true', '1', 'yes')"])
+            ),
             "default_nav_to_pose_bt_xml": selected_nav_to_pose_bt,
             "controller_server.ros__parameters.controller_frequency": (
                 dynamic_controller_frequency
+            ),
+            "bt_navigator.ros__parameters.bt_loop_duration": (
+                LaunchConfiguration("bt_loop_duration")
             ),
             "controller_server.ros__parameters.failure_tolerance": (
                 dynamic_failure_tolerance
@@ -319,6 +338,15 @@ def generate_launch_description():
             description="Nav2 params file",
         ),
         DeclareLaunchArgument("rviz", default_value="true", description="Start RViz if true"),
+        DeclareLaunchArgument("static_controller_frequency", default_value="20.0"),
+        DeclareLaunchArgument("bt_loop_duration", default_value="50"),
+        DeclareLaunchArgument("filter_info_package", default_value="nav2_map_server"),
+        DeclareLaunchArgument(
+            "filter_info_executable", default_value="costmap_filter_info_server"),
+        DeclareLaunchArgument(
+            "rviz_software_rendering", default_value="false",
+            description="Use Mesa software rendering for RViz on virtual machines.",
+        ),
         DeclareLaunchArgument(
             "localization_mode",
             default_value="ground_truth",
@@ -354,8 +382,8 @@ def generate_launch_description():
             }],
         ),
         Node(
-            package="nav2_map_server",
-            executable="costmap_filter_info_server",
+            package=LaunchConfiguration("filter_info_package"),
+            executable=LaunchConfiguration("filter_info_executable"),
             name="global_costmap_filter_info_server",
             output="screen",
             parameters=[{
@@ -380,8 +408,8 @@ def generate_launch_description():
             }],
         ),
         Node(
-            package="nav2_map_server",
-            executable="costmap_filter_info_server",
+            package=LaunchConfiguration("filter_info_package"),
+            executable=LaunchConfiguration("filter_info_executable"),
             name="local_costmap_filter_info_server",
             output="screen",
             parameters=[{
@@ -516,6 +544,13 @@ def generate_launch_description():
             name="rviz2",
             arguments=["-d", rviz_config_path],
             parameters=[{"use_sim_time": use_sim_time}],
+            additional_env={
+                "LIBGL_ALWAYS_SOFTWARE": PythonExpression([
+                    "'1' if '", rviz_software_rendering,
+                    "'.lower() in ('true', '1', 'yes') else '",
+                    os.environ.get("LIBGL_ALWAYS_SOFTWARE", "0"), "'",
+                ]),
+            },
             output="screen",
             condition=IfCondition(use_rviz),
         ),

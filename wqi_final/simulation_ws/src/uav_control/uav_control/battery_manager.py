@@ -16,6 +16,8 @@ from uav_control.battery_model import BatteryModel, BatteryParameters
 
 LANDED = 0
 FLYING = 1
+TAKING_OFF = 2
+LANDING = 3
 
 
 class BatteryManager(Node):
@@ -67,6 +69,8 @@ class BatteryManager(Node):
             "update_rate": 10.0,
             "publish_rate": 2.0,
             "maximum_update_step_s": 1.0,
+            "px4_startup_overhead_s": 20.0,
+            "px4_landing_overhead_s": 10.0,
         }
         self.declare_parameter("external_charger_control", False)
         self.declare_parameter("maximum_measured_acceleration_mps2", 20.0)
@@ -89,7 +93,9 @@ class BatteryManager(Node):
             raise ValueError(
                 "maximum_measured_acceleration_mps2 must be positive"
             )
-        self.parameters = BatteryParameters.from_mapping(values)
+        self.declare_parameter("flight_backend", "px4")
+        self.parameters = BatteryParameters.from_mapping(values).for_backend(
+            str(self.get_parameter("flight_backend").value))
         self.model = BatteryModel(self.parameters)
 
         self.callback_group = ReentrantCallbackGroup()
@@ -166,6 +172,13 @@ class BatteryManager(Node):
         self.power_pub = self.create_publisher(
             Float32, "battery_power_w", transient_qos
         )
+        self.charging_input_pub = self.create_publisher(
+            Float32, "charging_input_power_w", transient_qos
+        )
+        self.charging_target_soc = 1.0
+        self.charging_active = True
+        self.create_subscription(Float32, "charging_target_soc",
+                                 self._charging_target_callback, transient_qos)
         self.power_consumption_pub = self.create_publisher(
             Float32, "power_consumption", transient_qos
         )
@@ -236,6 +249,12 @@ class BatteryManager(Node):
         with self.lock:
             self.charger_available = bool(message.data)
 
+    def _charging_target_callback(self, message: Float32) -> None:
+        value = float(message.data)
+        if math.isfinite(value) and 0 <= value <= 1:
+            with self.lock:
+                self.charging_target_soc = value
+
     def _payload_callback(self, message: Float32) -> None:
         payload = float(message.data)
         if (
@@ -252,10 +271,15 @@ class BatteryManager(Node):
 
     def _operating_state(self):
         with self.lock:
+            if self.model.soc >= self.charging_target_soc:
+                self.charging_active = False
+            elif self.model.soc < self.charging_target_soc - 0.002:
+                self.charging_active = True
             return (
                 self.phase,
-                self.vehicle_state == FLYING,
-                self.docked and self.charger_available,
+                self.vehicle_state in (FLYING, TAKING_OFF, LANDING),
+                self.docked and self.charger_available
+                and self.vehicle_state == LANDED and self.charging_active,
                 self.velocity_mps,
                 self.payload_mass_kg,
             )
@@ -321,6 +345,7 @@ class BatteryManager(Node):
                         acceleration_velocity_dot
                     ),
                     payload_mass_kg=payload,
+                    charge_target_soc=self.charging_target_soc,
                 )
             except ValueError as error:
                 self.get_logger().error(
@@ -348,10 +373,13 @@ class BatteryManager(Node):
             )
             self.last_reported_mode = snapshot.mode
         if level != self.last_level:
-            log = self.get_logger().error if level == "CRITICAL" else self.get_logger().warn
-            if level == "NORMAL":
-                log = self.get_logger().info
-            log(f"Battery level: {level} ({snapshot.soc * 100.0:.1f}%)")
+            message = f"Battery level: {level} ({snapshot.soc * 100.0:.1f}%)"
+            if level == "CRITICAL":
+                self.get_logger().error(message)
+            elif level == "LOW":
+                self.get_logger().warning(message)
+            else:
+                self.get_logger().info(message)
             self.last_level = level
 
     def _publish(self) -> None:
@@ -388,6 +416,14 @@ class BatteryManager(Node):
         self.power_pub.publish(
             Float32(data=float(snapshot.battery_power_w))
         )
+        # Recover charger-side input, including UAV conversion losses and
+        # onboard idle load. Net stored battery power alone is not source power.
+        charging_input = (
+            (max(0.0, -snapshot.battery_power_w)
+             + self.parameters.docked_idle_power_w) / self.parameters.charge_efficiency
+            if snapshot.mode in ("CHARGING", "FULL") else 0.0
+        )
+        self.charging_input_pub.publish(Float32(data=float(charging_input)))
         self.power_consumption_pub.publish(
             Float32(data=float(snapshot.battery_power_w))
         )

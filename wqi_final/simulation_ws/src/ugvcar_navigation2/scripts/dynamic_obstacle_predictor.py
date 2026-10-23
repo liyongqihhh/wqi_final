@@ -23,6 +23,7 @@ from dynamic_obstacle_prediction import (
     CollisionRiskLatch,
     DynamicObstacleTracker,
     PoseHistory,
+    ScanPoseSynchronizer,
     body_to_world,
     calculate_collision_risk,
     choose_drivable_collision_risk,
@@ -31,6 +32,7 @@ from dynamic_obstacle_prediction import (
     effective_prediction_radius,
     forward_escape_guard_points,
     plan_goal_changed,
+    predicted_swept_points,
     prediction_cloud_points,
     path_tangent,
     scan_clusters,
@@ -97,6 +99,10 @@ class DynamicObstaclePredictor(Node):
         # the combined UGV-UAV footprint onto the opposite road edge.
         self.declare_parameter("guard_side_offset", 1.60)
         self.declare_parameter("guard_tail_length", 3.00)
+        # Global 2-D occupancy is a short measured-motion snapshot, not the
+        # union of all future encounters. DWB evaluates the full time horizon.
+        self.declare_parameter("global_prediction_horizon", 1.0)
+        self.declare_parameter("global_prediction_maximum_distance", 0.45)
         # The lethal prediction footprint includes the physical obstacle and
         # the requested clearance. Non-lethal inflation alone does not force
         # SmacPlanner to preserve that clearance at a moving encounter.
@@ -185,6 +191,12 @@ class DynamicObstaclePredictor(Node):
         )
         self.guard_side_offset = float(
             self.get_parameter("guard_side_offset").value
+        )
+        self.global_prediction_horizon = float(
+            self.get_parameter("global_prediction_horizon").value
+        )
+        self.global_prediction_maximum_distance = float(
+            self.get_parameter("global_prediction_maximum_distance").value
         )
         self.guard_tail_length = float(
             self.get_parameter("guard_tail_length").value
@@ -283,6 +295,7 @@ class DynamicObstaclePredictor(Node):
             ),
         )
         self.latest_plan = ()
+        self.scan_synchronizer = ScanPoseSynchronizer()
         self.road_mask = None
         self.risk_latch = CollisionRiskLatch(
             clear_confirmations=int(
@@ -324,7 +337,9 @@ class DynamicObstaclePredictor(Node):
         self.create_subscription(
             Odometry, "/ground_truth/odom", self._ground_truth_callback, 20
         )
-        self.create_subscription(Path, "/plan", self._plan_callback, 10)
+        # /plan also contains proposals rejected by the stability/patience BT.
+        # Use only the route actually passed to DWB, including its map tangent.
+        self.create_subscription(Path, "/received_global_plan", self._plan_callback, 10)
         transient_qos = QoSProfile(
             depth=1,
             reliability=ReliabilityPolicy.RELIABLE,
@@ -352,6 +367,7 @@ class DynamicObstaclePredictor(Node):
     def _ground_truth_callback(self, message: Odometry) -> None:
         timestamp = self._message_time(message)
         self.pose_history.add(timestamp, self._pose(message))
+        self._process_synchronized_scans()
 
     def _plan_callback(self, message: Path) -> None:
         next_plan = tuple(
@@ -436,6 +452,17 @@ class DynamicObstaclePredictor(Node):
             self.road_side_preference_margin,
         )
 
+    def _passing_footprint_cost(self, point):
+        # The lane centre alone can be clear while half the vehicle is outside
+        # the road. Keep soft shoulders usable, but never cross lethal edges.
+        return max(
+            [self._road_mask_cost(*point)]
+            + [self._road_mask_cost(
+                point[0] + self.robot_radius * math.cos(angle),
+                point[1] + self.robot_radius * math.sin(angle),
+            ) for angle in (i * math.pi / 8.0 for i in range(16))]
+        )
+
     def _calculate_risk(
         self,
         track,
@@ -494,10 +521,12 @@ class DynamicObstaclePredictor(Node):
         return choose_drivable_collision_risk(
             risk,
             alternative,
-            self._road_mask_cost(*risk.safe_point),
-            self._road_mask_cost(*alternative.safe_point),
+            self._passing_footprint_cost(risk.safe_point),
+            self._passing_footprint_cost(alternative.safe_point),
             self.road_side_blocked_cost,
             self.road_side_preference_margin,
+            robot_position=base_pose[:2],
+            planning_direction=planning_direction,
         )
 
     def _message_time(self, message) -> float:
@@ -548,6 +577,15 @@ class DynamicObstaclePredictor(Node):
         self.dynamic_tracks_pub.publish(message)
 
     def _scan_callback(self, message: LaserScan) -> None:
+        self.scan_synchronizer.add(self._message_time(message), message)
+        self._process_synchronized_scans()
+
+    def _process_synchronized_scans(self) -> None:
+        now = self.get_clock().now().nanoseconds * 1.0e-9
+        for message in self.scan_synchronizer.ready(self.pose_history, now):
+            self._process_scan(message)
+
+    def _process_scan(self, message: LaserScan) -> None:
         timestamp = self._message_time(message)
         base_pose = self.pose_history.pose_at(timestamp)
         pose_gap = self.pose_history.nearest_time_gap(timestamp)
@@ -636,11 +674,15 @@ class DynamicObstaclePredictor(Node):
             ),
             default=None,
         )
-        risk_body = [
-            world_to_body(point, pose)
-            for risk in active_risks
-            for point in risk.guard_points
-        ]
+        # Long, latched collision strips can seal a road junction even after
+        # the obstacle has moved away. Keep actual moving occupancy live;
+        # future collision times stay in the local predictive trajectory critic.
+        risk_body = [world_to_body(point, pose) for point in predicted_swept_points(
+            dynamic_tracks,
+            self.global_prediction_horizon,
+            0.25,
+            self.global_prediction_maximum_distance,
+        )]
         escape_gate_points = (
             [
                 point

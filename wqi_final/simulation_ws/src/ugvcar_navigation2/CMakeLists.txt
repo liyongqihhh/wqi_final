@@ -15,6 +15,7 @@ find_package(nav_2d_msgs REQUIRED)
 find_package(nav2_behavior_tree REQUIRED)
 find_package(nav2_core REQUIRED)
 find_package(nav2_costmap_2d REQUIRED)
+find_package(nav2_map_server REQUIRED)
 find_package(nav2_util REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(pluginlib REQUIRED)
@@ -25,8 +26,14 @@ find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(ugvcar_navigation2_interfaces REQUIRED)
 
+add_executable(managed_filter_info_server src/managed_filter_info_server.cpp)
+ament_target_dependencies(managed_filter_info_server nav2_map_server nav2_util rclcpp)
+install(TARGETS managed_filter_info_server DESTINATION lib/${PROJECT_NAME})
+
 add_library(ugvcar_navigation_algorithms SHARED
   src/dstar_lite.cpp
+  src/dynamic_path_policy.cpp
+  src/road_footprint_model.cpp
   src/path_heading_model.cpp
   src/predictive_collision_model.cpp
 )
@@ -102,10 +109,13 @@ target_compile_definitions(
   nav2_dynamic_obstacle_cleared_condition_bt_node
   PRIVATE BT_PLUGIN_EXPORT
 )
+target_include_directories(nav2_dynamic_obstacle_cleared_condition_bt_node PRIVATE include)
+target_link_libraries(nav2_dynamic_obstacle_cleared_condition_bt_node ugvcar_navigation_algorithms)
 ament_target_dependencies(
   nav2_dynamic_obstacle_cleared_condition_bt_node
   behaviortree_cpp_v3
   nav2_behavior_tree
+  nav_msgs
   rclcpp
   std_msgs
 )
@@ -123,6 +133,8 @@ if(BUILD_TESTING)
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
   ament_add_pytest_test(test_navigation_config test/test_navigation_config.py)
+  ament_add_pytest_test(test_campus_ugv_launch test/test_campus_ugv_launch.py)
+  ament_add_pytest_test(test_managed_filter_info test/test_managed_filter_info.py TIMEOUT 90)
   ament_add_pytest_test(
     test_dynamic_obstacle_prediction
     test/test_dynamic_obstacle_prediction.py
@@ -130,6 +142,11 @@ if(BUILD_TESTING)
   ament_add_gtest(test_dstar_lite test/test_dstar_lite.cpp)
   target_link_libraries(test_dstar_lite ugvcar_navigation_algorithms)
   target_include_directories(test_dstar_lite PRIVATE include)
+  ament_add_gtest(test_dynamic_path_policy test/test_dynamic_path_policy.cpp)
+  target_link_libraries(test_dynamic_path_policy ugvcar_navigation_algorithms)
+  ament_add_gtest(test_road_footprint_model test/test_road_footprint_model.cpp)
+  target_link_libraries(test_road_footprint_model ugvcar_navigation_algorithms)
+  target_include_directories(test_dynamic_path_policy PRIVATE include)
   ament_add_gtest(
     test_predictive_collision_model
     test/test_predictive_collision_model.cpp
@@ -153,6 +170,7 @@ install(DIRECTORY launch maps config behavior_trees
 install(PROGRAMS
   scripts/dynamic_obstacle_predictor.py
   scripts/gazebo_ground_truth_localizer.py
+  scripts/wait_for_ugv_ready.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

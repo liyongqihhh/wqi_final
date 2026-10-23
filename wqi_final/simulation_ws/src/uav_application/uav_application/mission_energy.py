@@ -55,9 +55,15 @@ class _ProfileBuilder:
 class MissionEnergyPlanner:
     """Build a payload-aware, acceleration-resolved safe-return profile."""
 
-    def __init__(self, waypoint_map: WaypointMap, battery_parameters) -> None:
+    def __init__(
+        self, waypoint_map: WaypointMap, battery_parameters,
+        flight_backend: str = "px4",
+    ) -> None:
+        if flight_backend != "px4":
+            raise ValueError("Unknown flight backend")
         self.waypoint_map = waypoint_map
         self.parameters = battery_parameters
+        self.flight_backend = flight_backend
 
     @staticmethod
     def _distance(first: Waypoint, second: Waypoint) -> float:
@@ -279,6 +285,28 @@ class MissionEnergyPlanner:
             payload_mass_kg=payload_mass_kg,
         ))
 
+    def plan_transfer(self, route, landing_height, payload_mass_kg, hover_seconds):
+        """Predict a deck-to-deck sortie, including PX4 delays and every stop."""
+        points = tuple(tuple(float(v) for v in point) for point in route)
+        mass, height, hover = map(float, (payload_mass_kg, landing_height, hover_seconds))
+        if (len(points) < 2 or any(len(p) != 3 for p in points)
+                or not all(math.isfinite(v) for p in points for v in p)
+                or not all(math.isfinite(v) for v in (mass, height, hover))):
+            raise ValueError("Transfer needs at least two finite 3D points")
+        if (not 0 <= mass <= self.parameters.maximum_payload_mass_kg
+                or height < 0 or hover < 0 or any(p[2] <= height for p in points)):
+            raise ValueError("Invalid transfer payload, deck height or hover duration")
+        builder = _ProfileBuilder(initial_payload_mass_kg=mass)
+        self._add_hover(builder, self.parameters.px4_startup_overhead_s, mass)
+        self._add_vertical(builder, height, points[0][2], mass)
+        self._add_hover(builder, hover, mass)
+        for first, last in zip(points, points[1:]):
+            self._add_horizontal(builder, math.dist(first[:2], last[:2]), mass)
+            self._add_vertical(builder, first[2], last[2], mass)
+        self._add_vertical(builder, points[-1][2], height, mass)
+        self._add_hover(builder, self.parameters.px4_landing_overhead_s, mass)
+        return builder.freeze()
+
     def plan(
         self,
         target_names,
@@ -287,6 +315,7 @@ class MissionEnergyPlanner:
         return_home: bool = True,
         payload_masses_kg=None,
         target_floors=None,
+        home_override=None,
     ) -> MissionPowerProfile:
         targets = self.waypoint_map.resolve_delivery_targets(
             target_names, target_floors
@@ -297,6 +326,11 @@ class MissionEnergyPlanner:
             targets, payload_masses_kg
         )
         home = self.waypoint_map.resolve_home(home_name)
+        if home_override is not None:
+            if home_override.name != home.name or not all(
+                    math.isfinite(v) for v in (home_override.x, home_override.y)):
+                raise ValueError("Carrier home override must match the configured home")
+            home = home_override
         settings = self.waypoint_map.flight
         local_delivery = uses_local_delivery_profile(home_name)
         delivery_altitudes = [
@@ -310,6 +344,12 @@ class MissionEnergyPlanner:
         )
         current_payload = sum(payload_masses)
         builder = _ProfileBuilder(initial_payload_mass_kg=current_payload)
+        # These prediction allowances cover motor ramp and land-detector delays,
+        # not geometric travel. Actual energy is never incremented artificially.
+        if self.flight_backend == "px4":
+            self._add_hover(
+                builder, self.parameters.px4_startup_overhead_s, current_payload
+            )
         self._add_vertical(
             builder,
             float(landing_height),
@@ -340,6 +380,8 @@ class MissionEnergyPlanner:
                 current_node = self.waypoint_map.corridor_nodes[
                     route_position
                 ]
+                if index == 0:
+                    current_node = home
                 self._add_horizontal(
                     builder,
                     self._distance(current_node, target),
@@ -380,6 +422,12 @@ class MissionEnergyPlanner:
             # Admission always reserves a safe return, even when the request
             # asks the aircraft to remain at the destination.
             if not local_delivery:
+                departure = self.waypoint_map.departure_node_for(target)
+                if departure is not None:
+                    self._add_horizontal(
+                        builder, self._distance(target, departure), current_payload
+                    )
+                    route_position = departure.name
                 self._add_vertical(
                     builder,
                     current_altitude,
@@ -417,4 +465,8 @@ class MissionEnergyPlanner:
             current_payload,
         )
         _ = return_home
+        if self.flight_backend == "px4":
+            self._add_hover(
+                builder, self.parameters.px4_landing_overhead_s, current_payload
+            )
         return builder.freeze()

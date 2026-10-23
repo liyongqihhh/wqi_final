@@ -19,6 +19,9 @@
     dynamic_replanning_enabled: true
     dynamic_replan_period: 0.5
     dynamic_path_clearance: 2.5
+    # Vertical legs need the 1.8 m safety sphere + 0.4 m tracking margin,
+    # not the horizontal cruise buffer touching the logistics wall at 2.5 m.
+    vertical_path_clearance: 2.2
     dynamic_path_spacing: 0.5
     dynamic_path_lookahead: 1.5
     dynamic_obstacle_warning_distance: 6.0
@@ -27,7 +30,7 @@
     obstacle_vector_timeout: 1.0
     # Require several clear observations before replacing an active detour.
     dynamic_clear_confirmations: 3
-    # Keep the sjtu position-loop error bounded and shorten the final approach
+    # Bound position reference steps and shorten the final approach
     # so the vehicle cannot overshoot into the 1.8 m obstacle envelope.
     cruise_position_setpoint_step: 2.0
     approach_slowdown_distance: 4.0

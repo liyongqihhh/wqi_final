@@ -47,7 +47,7 @@ class UgvEnergyParameters:
             "drive_reserve_percentage": 0.20,
             "charging_reserve_percentage": 0.10,
             "base_mass_kg": 1.28,
-            "docked_uav_mass_kg": 1.477,
+            "docked_uav_mass_kg": 1.535,
             "gravity_mps2": 9.80665,
             "rolling_resistance_coefficient": 0.030,
             "air_density_kgpm3": 1.225,
@@ -262,6 +262,8 @@ class UgvEnergyModel:
         cargo_mass_kg: float,
         uav_docked: bool,
         uav_battery_power_w: float,
+        *,
+        uav_charging_input_power_w: float | None = None,
     ) -> UgvEnergySnapshot:
         dt = float(dt_seconds)
         if not math.isfinite(dt) or dt <= 0.0:
@@ -284,6 +286,10 @@ class UgvEnergyModel:
         requested_output = (
             max(0.0, -float(uav_battery_power_w)) if uav_docked else 0.0
         )
+        if uav_charging_input_power_w is not None:
+            if not math.isfinite(uav_charging_input_power_w) or uav_charging_input_power_w < 0:
+                raise ValueError("UAV charger input must be finite and non-negative")
+            requested_output = float(uav_charging_input_power_w) if uav_docked else 0.0
         requested_source_power = 0.0
         if uav_docked and self.charging_energy_wh > 0.0:
             requested_source_power = self.parameters.charger_idle_power_w

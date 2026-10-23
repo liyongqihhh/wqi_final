@@ -1,0 +1,52 @@
+diff --git a/include/gazebo_imu_plugin.h b/include/gazebo_imu_plugin.h
+--- a/include/gazebo_imu_plugin.h
++++ b/include/gazebo_imu_plugin.h
+@@ -140,6 +140,7 @@
+ 
+   ignition::math::Vector3d gravity_W_;
+   ignition::math::Vector3d velocity_prev_W_;
++  bool contact_aware_acceleration_ = false;
+ 
+   Eigen::Vector3d gyroscope_bias_;
+   Eigen::Vector3d accelerometer_bias_;
+diff --git a/src/gazebo_imu_plugin.cpp b/src/gazebo_imu_plugin.cpp
+--- a/src/gazebo_imu_plugin.cpp
++++ b/src/gazebo_imu_plugin.cpp
+@@ -67,5 +67,11 @@
+   frame_id_ = link_name_;
++#if GAZEBO_MAJOR_VERSION >= 9
++  getSdfParam<bool>(_sdf, "contactAwareAcceleration",
++                    contact_aware_acceleration_, false);
++  velocity_prev_W_ = link_->WorldLinearVel();
++#endif
++
+ 
+   getSdfParam<std::string>(_sdf, "imuTopic", imu_topic_, kDefaultImuTopic);
+   getSdfParam<double>(_sdf, "gyroscopeNoiseDensity",
+                       imu_parameters_.gyroscope_noise_density,
+@@ -246,6 +252,7 @@
+   double dt = (current_time - last_time_).Double();
+   last_time_ = current_time;
++  if (dt <= 0.0) return;
+   double t = current_time.Double();
+ 
+ #if GAZEBO_MAJOR_VERSION >= 9
+   ignition::math::Pose3d T_W_I = link_->WorldPose(); //TODO(burrimi): Check tf.
+@@ -274,6 +281,17 @@
+   velocity_prev_W_ = velocity_current_W;
+ #elif GAZEBO_MAJOR_VERSION >= 9
+   ignition::math::Vector3d acceleration_I = link_->RelativeLinearAccel() - C_W_I.RotateVectorReverse(gravity_W_);
++  if (contact_aware_acceleration_) {
++    // Use the upstream pre-Gazebo-5 kinematic measurement path. In ODE
++    // contact, link force acceleration can disagree with physical motion.
++    // Velocity differences include contact impulses and joint constraints;
++    // native noise, gyro measurements and MAVLink transport remain unchanged.
++    const auto velocity_W = link_->WorldLinearVel();
++    acceleration_I = C_W_I.RotateVectorReverse(
++        (velocity_W - velocity_prev_W_) / dt - gravity_W_);
++    velocity_prev_W_ = velocity_W;
++  }
++
+ #else
+   ignition::math::Vector3d acceleration_I = ignitionFromGazeboMath(link_->GetRelativeLinearAccel() - C_W_I.RotateVectorReverse(gravity_W_));
+ #endif

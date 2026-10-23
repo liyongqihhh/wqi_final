@@ -35,3 +35,6 @@ def test_launch_command_is_headless_and_reproducible():
     assert "initial_ugv_charging_battery_percentage:=0.600" in command
     assert "gui:=false" in command
     assert "rviz:=false" in command
+    assert "flight_backend:=px4" in command
+    assert "route_policy:=energy_time" in command
+    assert "charge_policy:=as_needed" in command

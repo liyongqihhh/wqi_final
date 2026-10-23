@@ -1,0 +1,433 @@
+{
+  "road_components": 1,
+  "all_stop_component": 1,
+  "stop_count": 14,
+  "uav_corridor_clearance_m": {
+    "A": 6.0,
+    "B": 6.0,
+    "C": 5.103874001430014
+  },
+  "minimum_pavement_building_clearance_m": 2.0,
+  "building_count": 11,
+  "regions": [
+    "A",
+    "B",
+    "C"
+  ],
+  "namespaces": [
+    "ugv_00",
+    "ugv_01",
+    "ugv_02",
+    "ugv_03"
+  ],
+  "source_world_sha256": "7bfeec4820dbbf95d3267601e474fa13ad3e5bab3da236c3a1e95b1a71be21c8",
+  "layout_sha256": "8c88a4be5fc5f18d6fa5fd93c3ea950135ebc5ed009131baa360b97b229d1754",
+  "buildings": {
+    "teaching_building": {
+      "name": "teaching_building",
+      "model_name": "teaching_building",
+      "bounds": [
+        -75.0,
+        -49.0,
+        54.0,
+        70.0
+      ],
+      "height": 25.6,
+      "floors": 8,
+      "size": [
+        26.0,
+        16.0
+      ],
+      "source_geometry_sha256": "016ced66f65f1ba835b251a4c6694deef8156088d299b8dacd0c5ec649538db8"
+    },
+    "library": {
+      "name": "library",
+      "model_name": "library",
+      "bounds": [
+        -71.0,
+        -53.0,
+        28.0,
+        42.0
+      ],
+      "height": 22.4,
+      "floors": 7,
+      "size": [
+        18.0,
+        14.0
+      ],
+      "source_geometry_sha256": "e57a931df080801d0f8c88aa34d8d7bf758c3a5ca297851b8e693f19dc5ce80e"
+    },
+    "laboratory": {
+      "name": "laboratory",
+      "model_name": "laboratory_building",
+      "bounds": [
+        -37.0,
+        -13.0,
+        54.0,
+        70.0
+      ],
+      "height": 28.8,
+      "floors": 9,
+      "size": [
+        24.0,
+        16.0
+      ],
+      "source_geometry_sha256": "5b2a50438872dc637ba24b6dc0e705cb203d0c1fb82348506ec662bf9d76a312"
+    },
+    "innovation_center": {
+      "name": "innovation_center",
+      "model_name": "innovation_center",
+      "bounds": [
+        -35.0,
+        -15.0,
+        28.0,
+        42.0
+      ],
+      "height": 19.2,
+      "floors": 6,
+      "size": [
+        20.0,
+        14.0
+      ],
+      "source_geometry_sha256": "70c8ab8182de5176f41119590fed6b3d356120ae53de8dffae6652c055f03c98"
+    },
+    "dormitory_1": {
+      "name": "dormitory_1",
+      "model_name": "dormitory_1",
+      "bounds": [
+        41.0,
+        55.0,
+        23.0,
+        33.0
+      ],
+      "height": 32.0,
+      "floors": 10,
+      "size": [
+        14.0,
+        10.0
+      ],
+      "source_geometry_sha256": "efee89d2cd6d1e2f0af99b56f5c1c29b81f2a1731f3c1449da13190bf1b745dd"
+    },
+    "dormitory_2": {
+      "name": "dormitory_2",
+      "model_name": "dormitory_2",
+      "bounds": [
+        65.0,
+        79.0,
+        23.0,
+        33.0
+      ],
+      "height": 35.2,
+      "floors": 11,
+      "size": [
+        14.0,
+        10.0
+      ],
+      "source_geometry_sha256": "2835cccf9287545ad12cafb51a433029857282e0385290dea449cfcea0ca5b86"
+    },
+    "dormitory_3": {
+      "name": "dormitory_3",
+      "model_name": "dormitory_3",
+      "bounds": [
+        41.0,
+        55.0,
+        47.0,
+        57.0
+      ],
+      "height": 38.4,
+      "floors": 12,
+      "size": [
+        14.0,
+        10.0
+      ],
+      "source_geometry_sha256": "39b013afa7b459443f50a5d7298c002a2646bb1cc09d054cc0db2294ecf91a34"
+    },
+    "dormitory_4": {
+      "name": "dormitory_4",
+      "model_name": "dormitory_4",
+      "bounds": [
+        65.0,
+        79.0,
+        47.0,
+        57.0
+      ],
+      "height": 41.6,
+      "floors": 13,
+      "size": [
+        14.0,
+        10.0
+      ],
+      "source_geometry_sha256": "5af38a8e8a54ebeab6e80b835d21336bf42be63bf9b4f376c5b3e37937e61e34"
+    },
+    "cafeteria": {
+      "name": "cafeteria",
+      "model_name": "cafeteria",
+      "bounds": [
+        -16.0,
+        6.0,
+        -59.0,
+        -45.0
+      ],
+      "height": 16.0,
+      "floors": 5,
+      "size": [
+        22.0,
+        14.0
+      ],
+      "source_geometry_sha256": "272b1983060b54ebabd6ba05030139e96a7937cbf225482707fd83d030c8d853"
+    },
+    "gymnasium": {
+      "name": "gymnasium",
+      "model_name": "gymnasium",
+      "bounds": [
+        24.0,
+        48.0,
+        -60.0,
+        -44.0
+      ],
+      "height": 9.6,
+      "floors": 3,
+      "size": [
+        24.0,
+        16.0
+      ],
+      "source_geometry_sha256": "ee29010857e5a5e4b9a0aaba3af921786c5d5bd651b45965ffacd73a8df5fea3"
+    },
+    "logistics_center": {
+      "name": "logistics_center",
+      "model_name": "logistics_center",
+      "bounds": [
+        -68.0,
+        -44.0,
+        -46.0,
+        -34.0
+      ],
+      "height": 12.8,
+      "floors": 4,
+      "size": [
+        24.0,
+        12.0
+      ],
+      "source_geometry_sha256": "19bea2f1c970376c4b19d87d680726f2adf79d666e9a01bb860387094cd76ce1"
+    }
+  },
+  "obstacles": [
+    {
+      "name": "teaching_building",
+      "model_name": "teaching_building",
+      "bounds": [
+        -75.0,
+        -49.0,
+        54.0,
+        70.0
+      ],
+      "height": 25.6,
+      "floors": 8,
+      "size": [
+        26.0,
+        16.0
+      ],
+      "source_geometry_sha256": "016ced66f65f1ba835b251a4c6694deef8156088d299b8dacd0c5ec649538db8"
+    },
+    {
+      "name": "library",
+      "model_name": "library",
+      "bounds": [
+        -71.0,
+        -53.0,
+        28.0,
+        42.0
+      ],
+      "height": 22.4,
+      "floors": 7,
+      "size": [
+        18.0,
+        14.0
+      ],
+      "source_geometry_sha256": "e57a931df080801d0f8c88aa34d8d7bf758c3a5ca297851b8e693f19dc5ce80e"
+    },
+    {
+      "name": "laboratory",
+      "model_name": "laboratory_building",
+      "bounds": [
+        -37.0,
+        -13.0,
+        54.0,
+        70.0
+      ],
+      "height": 28.8,
+      "floors": 9,
+      "size": [
+        24.0,
+        16.0
+      ],
+      "source_geometry_sha256": "5b2a50438872dc637ba24b6dc0e705cb203d0c1fb82348506ec662bf9d76a312"
+    },
+    {
+      "name": "innovation_center",
+      "model_name": "innovation_center",
+      "bounds": [
+        -35.0,
+        -15.0,
+        28.0,
+        42.0
+      ],
+      "height": 19.2,
+      "floors": 6,
+      "size": [
+        20.0,
+        14.0
+      ],
+      "source_geometry_sha256": "70c8ab8182de5176f41119590fed6b3d356120ae53de8dffae6652c055f03c98"
+    },
+    {
+      "name": "dormitory_1",
+      "model_name": "dormitory_1",
+      "bounds": [
+        41.0,
+        55.0,
+        23.0,
+        33.0
+      ],
+      "height": 32.0,
+      "floors": 10,
+      "size": [
+        14.0,
+        10.0
+      ],
+      "source_geometry_sha256": "efee89d2cd6d1e2f0af99b56f5c1c29b81f2a1731f3c1449da13190bf1b745dd"
+    },
+    {
+      "name": "dormitory_2",
+      "model_name": "dormitory_2",
+      "bounds": [
+        65.0,
+        79.0,
+        23.0,
+        33.0
+      ],
+      "height": 35.2,
+      "floors": 11,
+      "size": [
+        14.0,
+        10.0
+      ],
+      "source_geometry_sha256": "2835cccf9287545ad12cafb51a433029857282e0385290dea449cfcea0ca5b86"
+    },
+    {
+      "name": "dormitory_3",
+      "model_name": "dormitory_3",
+      "bounds": [
+        41.0,
+        55.0,
+        47.0,
+        57.0
+      ],
+      "height": 38.4,
+      "floors": 12,
+      "size": [
+        14.0,
+        10.0
+      ],
+      "source_geometry_sha256": "39b013afa7b459443f50a5d7298c002a2646bb1cc09d054cc0db2294ecf91a34"
+    },
+    {
+      "name": "dormitory_4",
+      "model_name": "dormitory_4",
+      "bounds": [
+        65.0,
+        79.0,
+        47.0,
+        57.0
+      ],
+      "height": 41.6,
+      "floors": 13,
+      "size": [
+        14.0,
+        10.0
+      ],
+      "source_geometry_sha256": "5af38a8e8a54ebeab6e80b835d21336bf42be63bf9b4f376c5b3e37937e61e34"
+    },
+    {
+      "name": "cafeteria",
+      "model_name": "cafeteria",
+      "bounds": [
+        -16.0,
+        6.0,
+        -59.0,
+        -45.0
+      ],
+      "height": 16.0,
+      "floors": 5,
+      "size": [
+        22.0,
+        14.0
+      ],
+      "source_geometry_sha256": "272b1983060b54ebabd6ba05030139e96a7937cbf225482707fd83d030c8d853"
+    },
+    {
+      "name": "gymnasium",
+      "model_name": "gymnasium",
+      "bounds": [
+        24.0,
+        48.0,
+        -60.0,
+        -44.0
+      ],
+      "height": 9.6,
+      "floors": 3,
+      "size": [
+        24.0,
+        16.0
+      ],
+      "source_geometry_sha256": "ee29010857e5a5e4b9a0aaba3af921786c5d5bd651b45965ffacd73a8df5fea3"
+    },
+    {
+      "name": "logistics_center",
+      "model_name": "logistics_center",
+      "bounds": [
+        -68.0,
+        -44.0,
+        -46.0,
+        -34.0
+      ],
+      "height": 12.8,
+      "floors": 4,
+      "size": [
+        24.0,
+        12.0
+      ],
+      "source_geometry_sha256": "19bea2f1c970376c4b19d87d680726f2adf79d666e9a01bb860387094cd76ce1"
+    },
+    {
+      "name": "sign_A",
+      "bounds": [
+        -14.9,
+        -13.1,
+        17.925,
+        18.075
+      ],
+      "height": 2.6
+    },
+    {
+      "name": "sign_B",
+      "bounds": [
+        31.1,
+        32.9,
+        25.925,
+        26.075
+      ],
+      "height": 2.6
+    },
+    {
+      "name": "sign_C",
+      "bounds": [
+        15.1,
+        16.9,
+        -32.075,
+        -31.925
+      ],
+      "height": 2.6
+    }
+  ]
+}

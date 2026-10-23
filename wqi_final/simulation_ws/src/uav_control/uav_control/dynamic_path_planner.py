@@ -13,6 +13,33 @@ class DynamicPathPlan:
     reason: str
 
 
+class ObstacleClosingSpeed:
+    """Estimate radial approach speed from successive sensor observations."""
+
+    def __init__(self):
+        self.previous = None
+        self.speed = 0.0
+
+    def update(self, vector, timestamp):
+        distance = _vector_length(vector)
+        if not math.isfinite(distance) or not math.isfinite(timestamp):
+            self.previous = None
+            self.speed = 0.0
+            return self.speed
+        if self.previous is not None:
+            previous_distance, previous_time = self.previous
+            dt = timestamp - previous_time
+            if dt <= 0.0:
+                return self.speed
+            if dt <= 1.0:
+                measured = max(-10.0, min(10.0, (previous_distance - distance) / dt))
+                self.speed = 0.5 * self.speed + 0.5 * measured
+            else:
+                self.speed = 0.0
+        self.previous = (distance, timestamp)
+        return self.speed
+
+
 def _vector_length(vector) -> float:
     return math.sqrt(sum(float(value) ** 2 for value in vector))
 
@@ -143,6 +170,7 @@ def plan_dynamic_path(
     maximum_altitude: float,
     spacing: float,
     preferred_side: int = 1,
+    rear_closing_speed: float = 0.0,
 ) -> DynamicPathPlan:
     """Generate a smooth forward-progressing path from live 3D obstacle data."""
     start = tuple(float(value) for value in current)
@@ -157,6 +185,7 @@ def plan_dynamic_path(
         float(minimum_altitude),
         float(maximum_altitude),
         float(spacing),
+        float(rear_closing_speed),
     )
     if not all(math.isfinite(value) for value in values):
         raise ValueError("Dynamic path inputs must be finite")
@@ -214,7 +243,12 @@ def plan_dynamic_path(
     )
     rear_conflict = (
         projection < 0.0
-        and obstacle_distance <= float(rear_warning_distance)
+        and math.hypot(route[0], route[1]) > 0.5
+        and rear_closing_speed > 0.2
+        and obstacle_distance <= max(
+            float(rear_warning_distance),
+            float(clearance) + rear_closing_speed * 2.0,
+        )
     )
     close_conflict = (
         obstacle_distance <= float(clearance)

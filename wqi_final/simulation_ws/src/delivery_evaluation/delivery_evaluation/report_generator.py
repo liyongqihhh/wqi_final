@@ -13,6 +13,7 @@ from delivery_evaluation.models import RunRecord
 STRUCTURED_FIELDS = {"targets", "phase_durations_s"}
 NUMERIC_METRICS = (
     "sim_duration_s",
+    "charging_wait_s",
     "wall_duration_s",
     "real_time_factor",
     "delivery_rate_per_min",
@@ -108,6 +109,9 @@ def summarize(records: list[dict]) -> list[dict]:
             str(record.get("mode", "unknown")),
             str(record.get("scenario", "unknown")),
             str(record.get("obstacle_density", "none")),
+            str(record.get("flight_backend", "legacy")),
+            str(record.get("route_policy", "legacy")),
+            str(record.get("charge_policy", "legacy")),
         )
         grouped.setdefault(key, []).append(record)
 
@@ -124,6 +128,9 @@ def summarize(records: list[dict]) -> list[dict]:
             "mode": key[0],
             "scenario": key[1],
             "obstacle_density": key[2],
+            "flight_backend": key[3],
+            "route_policy": key[4],
+            "charge_policy": key[5],
             "runs": len(group),
             "successes": len(successful),
             "success_rate": len(successful) / len(group) if group else 0.0,
@@ -183,7 +190,7 @@ def _write_markdown(output: Path, records: list[dict], summaries: list[dict]) ->
             "| {mode} | {scenario} | {density} | {runs} | {successes} | "
             "{rate:.1%} | {collision_free} | {avoidance_rate:.1%} | "
             "{duration} | {energy} |".format(
-                mode=item["mode"],
+                mode="/".join(item[key] for key in ("mode", "flight_backend", "route_policy", "charge_policy")),
                 scenario=item["scenario"],
                 density=item["obstacle_density"],
                 runs=item["runs"],
@@ -225,7 +232,7 @@ def _write_markdown(output: Path, records: list[dict], summaries: list[dict]) ->
             "{ugv_error} | {uav_error} | {clearance} | {ugv_clearance} | "
             "{uav_dynamic_clearance} | {ugv_collisions} | {uav_collisions} | "
             "{recoveries} | {replans} | {holds} |".format(
-                mode=item["mode"],
+                mode="/".join(item[key] for key in ("mode", "flight_backend", "route_policy", "charge_policy")),
                 scenario=item["scenario"],
                 density=item["obstacle_density"],
                 rate=_format(mean("delivery_rate_per_min")),
@@ -298,7 +305,8 @@ def _charts(output: Path, summaries: list[dict]) -> str | None:
         return "matplotlib is not installed; PNG charts were not generated"
 
     labels = [
-        f"{item['mode']}\n{item['obstacle_density']}"
+        f"{item['mode']}/{item['flight_backend']}\n{item['obstacle_density']}\n"
+        f"{item['route_policy']}/{item['charge_policy']}"
         for item in summaries
     ]
     chart_specs = (
@@ -306,6 +314,7 @@ def _charts(output: Path, summaries: list[dict]) -> str | None:
         ("ugv_path_length_m", "UGV path length", "metres", "ugv_path_length.png"),
         ("uav_path_length_m", "UAV path length", "metres", "uav_path_length.png"),
         ("total_energy_wh", "Estimated total energy", "Wh", "energy_comparison.png"),
+        ("charging_wait_s", "Docked charging wait", "seconds", "charging_wait.png"),
     )
     for field, title, unit, filename in chart_specs:
         means = [

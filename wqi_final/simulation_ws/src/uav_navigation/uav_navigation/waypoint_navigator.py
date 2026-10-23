@@ -113,6 +113,14 @@ class WaypointMap:
         self._route_distance_cache = {}
         self._validate_flight_settings()
         self._validate_corridors()
+        self.departure_nodes = data.get("departure_nodes", {})
+        if not isinstance(self.departure_nodes, dict):
+            raise WaypointConfigurationError("Departure nodes must be a mapping")
+        for start, end in self.departure_nodes.items():
+            if start not in self.waypoints or end not in self._adjacency.get(start, ()):
+                raise WaypointConfigurationError(
+                    f"Departure '{start} -> {end}' must be a connected corridor edge"
+                )
 
     @staticmethod
     def _parse_waypoint(name: str, raw, kind: str) -> Waypoint:
@@ -239,6 +247,10 @@ class WaypointMap:
     @property
     def home(self) -> Waypoint:
         return self.waypoints[self.flight["home"]]
+
+    def departure_node_for(self, waypoint: Waypoint) -> Waypoint | None:
+        name = self.departure_nodes.get(waypoint.name)
+        return None if name is None else self.corridor_nodes[name]
 
     def resolve(self, names) -> list[Waypoint]:
         resolved = []

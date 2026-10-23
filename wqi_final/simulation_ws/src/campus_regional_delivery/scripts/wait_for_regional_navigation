@@ -1,0 +1,5 @@
+#!/usr/bin/python3
+from campus_regional_delivery.startup import main
+
+if __name__=="__main__":
+    raise SystemExit(main())

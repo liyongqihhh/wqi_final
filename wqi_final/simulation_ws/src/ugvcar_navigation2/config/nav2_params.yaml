@@ -193,7 +193,15 @@ controller_server:
       # enough forward/angular choices without materializing debug data for
       # every trajectory.
       debug_trajectory_details: false
-      trajectory_generator_name: "dwb_plugins::LimitedAccelGenerator"
+      publish_global_plan: true
+      # Integrate acceleration over the rollout. A one-cycle velocity window
+      # cannot see a complete lane change and repeatedly selects braking.
+      trajectory_generator_name: "dwb_plugins::StandardTrajectoryGenerator"
+      limit_vel_cmd_in_traj: false
+      include_last_point: true
+      # Cover the 8 s rollout at 0.4 m/s instead of attracting endpoints to a
+      # short pruned plan, which unintentionally caps straight-road progress.
+      forward_prune_distance: 6.0
       sim_period: 0.10
       min_vel_x: 0.0
       min_vel_y: 0.0
@@ -211,8 +219,8 @@ controller_server:
       decel_lim_theta: -1.2
       vx_samples: 7
       vy_samples: 1
-      vtheta_samples: 11
-      sim_time: 4.0
+      vtheta_samples: 31
+      sim_time: 8.0
       linear_granularity: 0.10
       angular_granularity: 0.05
       xy_goal_tolerance: 0.25
@@ -220,8 +228,9 @@ controller_server:
       short_circuit_trajectory_evaluation: false
       stateful: true
       default_critic_namespaces: ["dwb_critics", "ugvcar_navigation2"]
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "PredictiveCollision", "PathHeading", "PathAlign", "GoalAlign", "PathDist", "GoalDist", "PreferForward", "Twirling"]
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "ObstacleFootprint", "PredictiveCollision", "PathHeading", "PathAlign", "GoalAlign", "PathDist", "GoalDist", "PreferForward", "Twirling"]
       BaseObstacle.scale: 0.02
+      ObstacleFootprint.scale: 0.02
       # This scale dominates the bounded 12 m local-grid progress costs. Thus
       # collision-free candidates always win; if every candidate collides, the
       # TTC difference dominates and DWB selects the trajectory with most time.
@@ -232,7 +241,7 @@ controller_server:
       # envelope would reject the D* Lite route that was computed as safe.
       PredictiveCollision.safety_margin: 0.30
       PredictiveCollision.track_timeout: 0.75
-      PredictiveCollision.prediction_horizon: 4.0
+      PredictiveCollision.prediction_horizon: 8.0
       # A small raw clearance term becomes at most 100 after the 1e6 safety
       # scale. This makes a wide pass preferable while collision costs remain
       # categorically larger than all path-progress critics.
@@ -240,10 +249,10 @@ controller_server:
       PredictiveCollision.clearance_weight: 0.0001
       # Map-grid alignment can prefer zero velocity when a new route starts
       # behind a stopped UGV. This critic is active only below 0.08 m/s and
-      # above a 40-degree heading error, so it does not steer during cruising.
+      # above a 7-degree heading error, so it does not steer during cruising.
       PathHeading.scale: 20.0
       PathHeading.lookahead_distance: 0.80
-      PathHeading.activation_angle: 0.70
+      PathHeading.activation_angle: 0.12
       PathHeading.activation_linear_velocity: 0.08
       PathHeading.translation_weight: 3.0
       PathHeading.idle_penalty: 0.6
@@ -474,6 +483,7 @@ planner_server:
       lethal_cost: 253
       cost_penalty: 3.0
       max_expansions: 1000000
+      road_boundary_margin: 0.15
 
 smoother_server:
   ros__parameters:

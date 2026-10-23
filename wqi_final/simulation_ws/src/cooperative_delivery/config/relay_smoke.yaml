@@ -1,0 +1,11 @@
+# Short, real-physics commissioning route on the logistics access road.
+# The departure vehicle parks off the through lane; both pads remain on pavement.
+platform_a: {node: logistics_center, x: 1.5, y: -41.0, yaw: 1.571}
+platform_b: {node: logistics_center, x: 0.0, y: -38.0, yaw: 1.571}
+transfer_altitude: 3.0
+landing_height: 0.42
+transfer_speed_mps: 1.0
+transfer_vertical_speed_mps: 0.30
+transfer_hover_seconds: 5.0
+transfer_timeout_wall_s: 1800.0
+telemetry_timeout_wall_s: 3.0

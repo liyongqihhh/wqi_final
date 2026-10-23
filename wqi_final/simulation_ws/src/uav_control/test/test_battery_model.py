@@ -1,4 +1,5 @@
 from pathlib import Path
+from dataclasses import replace
 
 import pytest
 
@@ -21,10 +22,44 @@ def parameters():
 def test_configuration_matches_uav_geometry_and_mass():
     config = parameters()
     assert config.rotor_count == 4
-    assert config.base_mass_kg == pytest.approx(1.477)
+    assert config.base_mass_kg == pytest.approx(1.535)
     assert config.total_rotor_area_m2 == pytest.approx(
         4.0 * 3.141592653589793 * 0.12 ** 2
     )
+
+
+def test_px4_mass_override_is_shared_without_changing_default_parameters():
+    config = parameters()
+    assert config.for_backend("px4").base_mass_kg == pytest.approx(1.535)
+    with pytest.raises(BatteryConfigurationError):
+        config.for_backend("sjtu")
+    with pytest.raises(BatteryConfigurationError):
+        config.for_backend("invalid")
+
+
+def test_optional_px4_prediction_overheads_support_older_configuration():
+    config = parameters()
+    values = dict(config.__dict__)
+    values.pop("px4_startup_overhead_s")
+    values.pop("px4_landing_overhead_s")
+    parsed = BatteryParameters.from_mapping(values)
+    assert parsed.px4_startup_overhead_s == 20.0
+    assert parsed.px4_landing_overhead_s == 10.0
+
+
+@pytest.mark.parametrize("value", [-1.0, float("nan"), float("inf")])
+def test_px4_prediction_delays_must_be_finite_nonnegative(value):
+    with pytest.raises(BatteryConfigurationError):
+        replace(parameters(), px4_startup_overhead_s=value).validate()
+
+
+def test_charge_target_caps_stored_energy_and_reported_input():
+    config = parameters()
+    model = BatteryModel(config, initial_percentage=.5999)
+    before = model.energy_wh
+    snapshot = model.step(10, "IDLE", False, True, charge_target_soc=.60)
+    assert snapshot.soc == pytest.approx(.60)
+    assert -snapshot.battery_power_w * 10 / 3600 == pytest.approx(model.energy_wh - before)
 
 
 def test_payload_induced_power_follows_mass_to_three_halves():

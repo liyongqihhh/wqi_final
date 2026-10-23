@@ -1,0 +1,13 @@
+/**:
+  ros__parameters:
+    use_sim_time: true
+    offboard_rate: 20.0
+    offboard_warmup_seconds: 1.2
+    takeoff_clearance: 1.0
+    takeoff_altitude_tolerance: 0.15
+    landing_disarm_delay: 1.0
+    landing_descent_speed: 0.30
+    landing_xy_tolerance: 0.08
+    landing_horizontal_speed_tolerance: 0.15
+    precision_landing_timeout_s: 60.0
+    vehicle_status_topic: /fmu/out/vehicle_status_v1

@@ -14,7 +14,7 @@
     # mass is added only while the docking state is true. Cargo mass changes
     # after every delivery and is supplied by the cooperative mission manager.
     base_mass_kg: 1.28
-    docked_uav_mass_kg: 1.477
+    docked_uav_mass_kg: 1.535
     gravity_mps2: 9.80665
     rolling_resistance_coefficient: 0.030
     air_density_kgpm3: 1.225

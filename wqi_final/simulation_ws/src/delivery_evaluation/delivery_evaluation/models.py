@@ -41,11 +41,15 @@ class RunRecord:
     random_seed: int
     targets: list[str]
     success: bool = False
+    flight_backend: str = "px4"
+    route_policy: str = "distance"
+    charge_policy: str = "full"
     failure_reason: str = ""
     sim_duration_s: float = 0.0
     wall_duration_s: float = 0.0
     real_time_factor: float = 0.0
     phase_durations_s: dict[str, float] = field(default_factory=dict)
+    charging_wait_s: float = 0.0
     delivery_rate_per_min: float = 0.0
     energy_per_completed_target_wh: float = 0.0
     ugv_path_length_m: float = 0.0

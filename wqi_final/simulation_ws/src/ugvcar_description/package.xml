@@ -3,7 +3,7 @@
 <package format="3">
   <name>ugvcar_description</name>
   <version>0.1.0</version>
-  <description>UGV models, sensors, campus world, and map generator.</description>
+  <description>UGV models, sensors, campus world, and delivery configuration.</description>
   <maintainer email="liyongqihhh@users.noreply.github.com">wqi</maintainer>
   <license>Apache-2.0</license>
 

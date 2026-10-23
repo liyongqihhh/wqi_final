@@ -24,6 +24,27 @@ def test_required_delivery_points_exist():
     )
 
 
+def test_all_dormitory_departures_go_directly_to_safe_centre():
+    waypoints = WaypointMap(CONFIG)
+    footprints = (
+        (11.0, 25.0, -5.0, 5.0), (35.0, 49.0, -5.0, 5.0),
+        (11.0, 25.0, 17.0, 27.0), (35.0, 49.0, 17.0, 27.0),
+    )
+    for index in range(1, 5):
+        pad = waypoints.waypoints[f"dormitory_{index}"]
+        departure = waypoints.departure_node_for(pad)
+        assert departure.name == "dormitory"
+        assert (departure.x, departure.y) == (30.0, 11.0)
+        for sample in range(101):
+            ratio = sample / 100.0
+            x = pad.x + ratio * (departure.x - pad.x)
+            y = pad.y + ratio * (departure.y - pad.y)
+            for xmin, xmax, ymin, ymax in footprints:
+                dx = max(xmin - x, 0.0, x - xmax)
+                dy = max(ymin - y, 0.0, y - ymax)
+                assert math.hypot(dx, dy) >= 3.5 - 1e-9
+
+
 def test_cruise_altitude_uses_low_altitude_corridor():
     waypoints = WaypointMap(CONFIG)
     assert waypoints.flight["cruise_altitude"] == 15.0

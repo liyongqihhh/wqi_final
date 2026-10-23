@@ -2,7 +2,7 @@ import math
 import os
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import PoseStamped
@@ -65,8 +65,16 @@ class DeliveryMissionManager(Node):
             "battery_model.yaml",
         )
         self.declare_parameter("battery_config", default_battery_file)
+        self.declare_parameter("flight_backend", "px4")
+        self.require_landed_state = True
         self.declare_parameter("battery_state_timeout", 3.0)
+        self.declare_parameter("takeoff_state_timeout_s", 30.0)
+        takeoff_timeout = float(self.get_parameter("takeoff_state_timeout_s").value)
+        if not math.isfinite(takeoff_timeout) or takeoff_timeout <= 0:
+            raise ValueError("takeoff_state_timeout_s must be finite and positive")
         self.declare_parameter("energy_constraints_enabled", True)
+        self.declare_parameter("use_carrier_home", False)
+        self.use_carrier_home = bool(self.get_parameter("use_carrier_home").value)
         self.energy_constraints_enabled = bool(
             self.get_parameter("energy_constraints_enabled").value
         )
@@ -75,9 +83,10 @@ class DeliveryMissionManager(Node):
         )
         self.battery_parameters = BatteryParameters.from_yaml(
             str(self.get_parameter("battery_config").value)
-        )
+        ).for_backend(str(self.get_parameter("flight_backend").value))
         self.energy_planner = MissionEnergyPlanner(
-            self.waypoint_map, self.battery_parameters
+            self.waypoint_map, self.battery_parameters,
+            str(self.get_parameter("flight_backend").value),
         )
 
         self.callback_group = ReentrantCallbackGroup()
@@ -93,6 +102,17 @@ class DeliveryMissionManager(Node):
         self.replan_count = 0
         self.recovery_home = None
         self.recovery_landing_height = 0.0
+        self.px4_landing_fault = ""
+        self.create_subscription(String, "px4/landing_fault",
+            lambda message: setattr(self, "px4_landing_fault", message.data),
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.TRANSIENT_LOCAL),
+            callback_group=self.callback_group)
+        self.carrier_home_pose = None
+        self.create_subscription(PoseStamped, "carrier_home", self._carrier_home_callback,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.TRANSIENT_LOCAL),
+            callback_group=self.callback_group)
 
         self.fly_client = ActionClient(
             self,
@@ -222,6 +242,7 @@ class DeliveryMissionManager(Node):
                 goal_request.payload_masses_kg,
                 goal_request.home_name,
                 bool(goal_request.return_home),
+                require_carrier=True,
             )
         except WaypointConfigurationError as error:
             self.get_logger().error(str(error))
@@ -278,6 +299,34 @@ class DeliveryMissionManager(Node):
             Float32(data=float(max(0.0, payload_mass_kg)))
         )
 
+    def _carrier_home_callback(self, message):
+        with self.lock:
+            self.carrier_home_pose = message
+
+    def _carrier_home(self, home, required=False):
+        if not getattr(self, "use_carrier_home", False):
+            return home
+        with self.lock:
+            pose = self.carrier_home_pose
+        valid = False
+        if pose is not None and pose.header.frame_id == "map":
+            p = pose.pose.position
+            stamp = pose.header.stamp.sec * 1_000_000_000 + pose.header.stamp.nanosec
+            age = (self.get_clock().now().nanoseconds - stamp) / 1e9
+            # /clock and pose callbacks on different nodes can be one tick apart.
+            valid = (-.25 <= age <= 3 and all(math.isfinite(v) for v in (p.x, p.y, p.z))
+                     and math.hypot(p.x-home.x, p.y-home.y) <= 2.0)
+        if not valid:
+            if required:
+                details = "no carrier message"
+                if pose is not None:
+                    details = (f"frame={pose.header.frame_id}, age={age:.3f}s, "
+                               f"distance={math.hypot(p.x-home.x,p.y-home.y):.3f}m") if pose.header.frame_id == "map" else f"frame={pose.header.frame_id}"
+                raise ValueError(f"Fresh carrier pose near the requested home is required ({details})")
+            # Batch estimates before the UGV arrives still use the nominal stop.
+            return home
+        return replace(home, x=float(p.x), y=float(p.y))
+
     def _resolve_optimized_delivery(
         self,
         target_names,
@@ -285,11 +334,12 @@ class DeliveryMissionManager(Node):
         payload_masses,
         home_name: str,
         return_home: bool,
+        require_carrier=False,
     ) -> OptimizedDelivery:
         names = list(target_names)
         floors = list(target_floors)
         targets = self.waypoint_map.resolve_delivery_targets(names, floors)
-        home = self.waypoint_map.resolve_home(home_name)
+        home = self._carrier_home(self.waypoint_map.resolve_home(home_name), require_carrier)
         masses = self.energy_planner.resolve_payload_masses(
             targets, payload_masses
         )
@@ -337,6 +387,7 @@ class DeliveryMissionManager(Node):
         landing_height: float,
         payload_masses_kg=None,
         target_floors=None,
+        home_override=None,
     ):
         percentage = self._battery_percentage()
         if percentage is None:
@@ -349,6 +400,8 @@ class DeliveryMissionManager(Node):
                 return_home,
                 payload_masses_kg=payload_masses_kg,
                 target_floors=target_floors,
+                home_override=(home_override or self._carrier_home(
+                    self.waypoint_map.resolve_home(home_name))),
             )
         except (ValueError, WaypointConfigurationError) as error:
             return None, f"Energy preflight rejected: {error}"
@@ -468,6 +521,13 @@ class DeliveryMissionManager(Node):
                 mission.payload_masses,
                 mission.target_floors,
             )
+            if assessment is not None:
+                profile = self.energy_planner.plan(
+                    mission.target_names, request.home_name, landing_height,
+                    request.return_home, payload_masses_kg=mission.payload_masses,
+                    target_floors=mission.target_floors)
+                response.estimated_duration_s = float(sum(
+                    segment.duration_seconds for segment in profile.segments))
         except (ValueError, WaypointConfigurationError) as error:
             assessment = None
             message = f"Energy preflight rejected: {error}"
@@ -530,24 +590,40 @@ class DeliveryMissionManager(Node):
         response = future.result()
         return bool(response.success), str(response.message)
 
-    def _wait_vehicle_state(self, expected: int, timeout: float) -> bool:
-        deadline = time.monotonic() + timeout
-        while rclpy.ok() and time.monotonic() < deadline:
+    def _wait_vehicle_state(self, expected: int, timeout: float, goal_handle=None) -> bool:
+        start = self.get_clock().now().nanoseconds
+        wall_deadline = time.monotonic() + max(30.0, timeout * 10.0)
+        while rclpy.ok() and time.monotonic() < wall_deadline:
+            if goal_handle is not None and goal_handle.is_cancel_requested:
+                return False
             _, state, _ = self._snapshot()
             if state == expected:
                 return True
+            if (self.get_clock().now().nanoseconds - start) / 1e9 >= timeout:
+                return False
             time.sleep(0.05)
         return False
 
     def _wait_landed(
-        self, expected_altitude: float = 0.0, timeout: float = 30.0
+        self, expected_altitude: float = 0.0, timeout: float = 30.0,
+        require_normal_landing: bool = False,
     ) -> bool:
-        deadline = time.monotonic() + timeout
+        start_sim = self.get_clock().now().nanoseconds
+        deadline = time.monotonic() + max(30.0, timeout * 10.0)
         settled_since = None
         last_state = None
         last_altitude = float("inf")
         last_speed = float("inf")
+        self.last_landing_failure = ""
         while rclpy.ok() and time.monotonic() < deadline:
+            if (require_normal_landing and self.require_landed_state
+                    and getattr(self, "px4_landing_fault", "")):
+                self.get_logger().error("PX4 emergency landing cannot complete a delivery: "
+                                        + self.px4_landing_fault)
+                self.last_landing_failure = self.px4_landing_fault
+                return False
+            if (self.get_clock().now().nanoseconds - start_sim) / 1e9 >= timeout:
+                break
             odom, state, _ = self._snapshot()
             last_state = state
             if odom is None:
@@ -561,11 +637,16 @@ class DeliveryMissionManager(Node):
                 + velocity.y * velocity.y
                 + velocity.z * velocity.z
             )
-            if state == LANDED and last_altitude <= expected_altitude + 0.25:
+            altitude_matches = (
+                abs(last_altitude - expected_altitude) <= 0.15
+                if self.require_landed_state
+                else last_altitude <= expected_altitude + 0.25
+            )
+            if state == LANDED and altitude_matches:
                 return True
 
             now = time.monotonic()
-            if is_settled_at_altitude(
+            if not self.require_landed_state and is_settled_at_altitude(
                 last_altitude, last_speed, expected_altitude
             ):
                 if settled_since is None:
@@ -578,11 +659,12 @@ class DeliveryMissionManager(Node):
             else:
                 settled_since = None
             time.sleep(0.05)
-        self.get_logger().error(
+        self.last_landing_failure = (
             "Landing confirmation timed out "
             f"(state={last_state}, altitude={last_altitude:.3f}, "
-            f"speed={last_speed:.3f})"
+            f"expected_altitude={expected_altitude:.3f}, speed={last_speed:.3f})"
         )
+        self.get_logger().error(self.last_landing_failure)
         return False
 
     def _configure_landing_height(self, landing_height: float) -> None:
@@ -593,11 +675,26 @@ class DeliveryMissionManager(Node):
 
     def _wait_sim_duration(self, duration: float, goal_handle) -> bool:
         start = self.get_clock().now().nanoseconds
-        wall_deadline = time.monotonic() + max(duration * 5.0, duration + 10.0)
+        last_sim_ns = start
+        last_progress_wall = time.monotonic()
+        # Visible Gazebo/RViz can run below RTF=0.2. Complete the simulated
+        # dwell, with separate protection against a stopped clock or hang.
+        wall_deadline = last_progress_wall + max(300.0, duration * 100.0)
         while rclpy.ok() and time.monotonic() < wall_deadline:
             if goal_handle.is_cancel_requested:
                 return False
-            elapsed = (self.get_clock().now().nanoseconds - start) / 1e9
+            now_ns = self.get_clock().now().nanoseconds
+            now_wall = time.monotonic()
+            if now_ns < last_sim_ns:
+                self.get_logger().error("Simulation clock moved backwards during hover")
+                return False
+            if now_ns > last_sim_ns:
+                last_sim_ns = now_ns
+                last_progress_wall = now_wall
+            elif now_wall - last_progress_wall >= 30.0:
+                self.get_logger().error("Simulation clock stalled for 30 seconds during hover")
+                return False
+            elapsed = (now_ns - start) / 1e9
             self._publish_feedback(goal_handle)
             if elapsed >= duration:
                 return True
@@ -868,7 +965,9 @@ class DeliveryMissionManager(Node):
                 "Automatic landing recovery could not confirm ground contact"
             )
         if not approached:
-            recovery_notes.append("warning=landed at current safe position")
+            recovery_notes.append(
+                "warning=landed without confirmed home approach" if landed
+                else "warning=current-position landing was not confirmed")
         return ", ".join(recovery_notes)
 
     def _fail(self, goal_handle, result, message):
@@ -893,6 +992,7 @@ class DeliveryMissionManager(Node):
                 goal_handle.request.payload_masses_kg,
                 goal_handle.request.home_name,
                 bool(goal_handle.request.return_home),
+                require_carrier=True,
             )
         except (ValueError, WaypointConfigurationError) as error:
             return self._fail(goal_handle, result, str(error))
@@ -911,6 +1011,7 @@ class DeliveryMissionManager(Node):
                 float(goal_handle.request.landing_height),
                 payload_masses,
                 mission.target_floors,
+                home_override=home,
             )
             self.energy_preflight_pub.publish(String(data=preflight_message))
             if assessment is None or not assessment.feasible:
@@ -935,6 +1036,10 @@ class DeliveryMissionManager(Node):
             else float(settings["takeoff_altitude"])
         )
         landing_height = float(goal_handle.request.landing_height)
+        if self.use_carrier_home:
+            self.get_logger().info(
+                f"Carrier return anchor: {home.name} at ({home.x:.3f}, {home.y:.3f}), "
+                f"landing z={landing_height:.3f}")
         self.recovery_home = home
         self.recovery_landing_height = landing_height
         remaining_payload = sum(payload_masses)
@@ -948,7 +1053,8 @@ class DeliveryMissionManager(Node):
             success, message = True, "UAV already released for takeoff"
         else:
             success, message = self._call_trigger(self.takeoff_client)
-        if not success or not self._wait_vehicle_state(FLYING, 15.0):
+        if not success or not self._wait_vehicle_state(FLYING,
+                float(self.get_parameter("takeoff_state_timeout_s").value), goal_handle):
             return self._fail(goal_handle, result, f"Takeoff failed: {message}")
 
         success, message = self._fly_to(
@@ -1052,14 +1158,33 @@ class DeliveryMissionManager(Node):
                 and (index < len(targets) - 1 or goal_handle.request.return_home)
             ):
                 self._set_phase(MissionPhase.CRUISE, target.name)
+                departure = self.waypoint_map.departure_node_for(target)
+                climb_point = target
+                if departure is not None:
+                    self.get_logger().info(
+                        f"Leave facade directly: {target.name} -> {departure.name} "
+                        f"at delivery altitude {delivery_altitude:.2f} m"
+                    )
+                    self._publish_direct_path(
+                        target, departure, delivery_altitude, delivery_altitude
+                    )
+                    success, message = self._fly_with_local_replan(
+                        departure, delivery_altitude, goal_handle
+                    )
+                    if not success:
+                        return self._fail(
+                            goal_handle, result, f"Facade departure failed: {message}"
+                        )
+                    route_position = departure.name
+                    climb_point = departure
                 success, message = self._fly_to(
-                    target, float(settings["cruise_altitude"]), goal_handle
+                    climb_point, float(settings["cruise_altitude"]), goal_handle
                 )
                 if not success:
                     return self._fail(
                         goal_handle,
                         result,
-                        f"Post-delivery climb failed: {message}",
+                        f"Post-delivery altitude transition failed: {message}",
                     )
 
         if goal_handle.request.return_home:
@@ -1099,8 +1224,10 @@ class DeliveryMissionManager(Node):
 
             self._set_phase(MissionPhase.LANDING, home.name)
             success, message = self._call_trigger(self.land_client)
-            if not success or not self._wait_landed(landing_height):
-                return self._fail(goal_handle, result, f"Landing failed: {message}")
+            if not success:
+                return self._fail(goal_handle, result, f"Landing command rejected: {message}")
+            if not self._wait_landed(landing_height, require_normal_landing=True):
+                return self._fail(goal_handle, result, f"Landing failed: {self.last_landing_failure}")
             self._publish_payload_mass(0.0)
 
         if goal_handle.is_cancel_requested:

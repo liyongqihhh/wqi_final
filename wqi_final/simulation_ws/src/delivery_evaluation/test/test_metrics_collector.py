@@ -117,6 +117,33 @@ def test_leaving_airborne_phase_closes_active_safety_hold():
     assert result.uav_safety_hold_s == pytest.approx(1.5)
 
 
+def test_charging_wait_is_available_as_comparison_metric():
+    metrics = collector()
+    metrics.start(record(), 0)
+    metrics.set_phase("CHARGING", 1_000_000_000)
+    metrics.set_phase("TAKEOFF", 4_000_000_000)
+    assert metrics.finish(5_000_000_000).charging_wait_s == pytest.approx(3)
+
+
+def test_initial_docking_is_not_counted_as_successful_redocking():
+    metrics = collector()
+    metrics.update_docked(True)
+    metrics.start(record(), 0)
+    metrics.update_docked(False)
+    result = metrics.finish(1_000_000_000)
+    assert result.detach_success
+    assert not result.redock_success
+
+
+def test_redocking_requires_a_real_detach_attach_cycle():
+    metrics = collector()
+    metrics.update_docked(True)
+    metrics.start(record(), 0)
+    metrics.update_docked(False)
+    metrics.update_docked(True)
+    assert metrics.finish(1_000_000_000).redock_success
+
+
 def test_live_dual_ugv_batteries_replace_offline_drive_estimate():
     metrics = collector()
     metrics.update_ugv_drive_battery(0.8)
@@ -152,6 +179,22 @@ def test_missing_uav_energy_telemetry_does_not_create_false_consumption():
 
     assert result.uav_energy_wh == pytest.approx(0.0)
     assert result.uav_charged_wh == pytest.approx(0.0)
+
+
+def test_three_pack_energy_balance_includes_net_gain_in_uav_pack():
+    metrics = collector()
+    metrics.update_ugv_drive_consumed(0)
+    metrics.update_ugv_charging_consumed(0)
+    metrics.update_consumed(0)
+    metrics.update_charged(0)
+    metrics.start(record(), 0)
+    metrics.update_ugv_drive_consumed(1)
+    metrics.update_ugv_charging_consumed(12)
+    metrics.update_consumed(2)
+    metrics.update_charged(10)
+    result = metrics.finish(1_000_000_000)
+    # 1 Wh drive + 2 Wh load + 2 Wh transfer loss, not 13 Wh.
+    assert result.total_energy_wh == pytest.approx(5)
 
 
 def test_ground_truth_clearance_counts_distinct_ugv_collision_episodes():

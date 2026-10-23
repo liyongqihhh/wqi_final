@@ -125,6 +125,14 @@ waypoints:
     delivery_altitude: 11.2
     payload_mass_kg: 0.20
 
+# Leave the dormitory facades at delivery height before climbing/descending.
+# All four straight segments to the central junction keep increasing standoff.
+departure_nodes:
+  dormitory_1: dormitory
+  dormitory_2: dormitory
+  dormitory_3: dormitory
+  dormitory_4: dormitory
+
 # The 15 m route follows the paved road centerlines, with small corner offsets
 # where the 1.8 m safety sphere needs extra building clearance.
 corridor_nodes:

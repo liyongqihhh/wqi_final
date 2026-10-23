@@ -35,6 +35,7 @@ class UgvEnergyManager(Node):
         self.cargo_mass_kg = 0.0
         self.uav_docked = False
         self.uav_battery_power_w = 0.0
+        self.uav_charging_input_power_w = 0.0
         self.last_update_ns = None
         self.last_charger_available = None
 
@@ -66,7 +67,7 @@ class UgvEnergyManager(Node):
         )
         self.create_subscription(
             Float32,
-            "/uav/battery_power_w",
+            "/uav/charging_input_power_w",
             self._uav_power_callback,
             transient_qos,
             callback_group=self.callback_group,
@@ -151,7 +152,7 @@ class UgvEnergyManager(Node):
         power = float(message.data)
         if math.isfinite(power):
             with self.lock:
-                self.uav_battery_power_w = power
+                self.uav_charging_input_power_w = max(0.0, power)
 
     def _operating_state(self):
         with self.lock:
@@ -160,7 +161,7 @@ class UgvEnergyManager(Node):
                 self.angular_speed_radps,
                 self.cargo_mass_kg,
                 self.uav_docked,
-                self.uav_battery_power_w,
+                self.uav_charging_input_power_w,
             )
 
     def _update(self) -> None:
@@ -172,7 +173,7 @@ class UgvEnergyManager(Node):
             return
         remaining = (now_ns - self.last_update_ns) / 1.0e9
         self.last_update_ns = now_ns
-        linear, angular, cargo, docked, uav_power = self._operating_state()
+        linear, angular, cargo, docked, charging_input = self._operating_state()
         if self.previous_linear_speed_mps is None:
             acceleration = 0.0
         else:
@@ -192,7 +193,8 @@ class UgvEnergyManager(Node):
                 acceleration,
                 cargo,
                 docked,
-                uav_power,
+                0.0,
+                uav_charging_input_power_w=charging_input,
             )
             remaining -= step
         available = self.model.snapshot().charger_available

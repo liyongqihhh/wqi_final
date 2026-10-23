@@ -22,6 +22,15 @@ def record(run_id, success, duration, collision_free=True):
     )
 
 
+def test_energy_strategies_and_backends_are_not_aggregated_together():
+    first = record("a", True, 10)
+    second = record("b", True, 10)
+    third = record("c", True, 10)
+    second.route_policy = "energy_time"
+    third.flight_backend = "legacy"
+    assert len(summarize([r.to_dict() for r in (first, second, third)])) == 3
+
+
 def test_report_preserves_failed_runs_and_summarizes_successes(tmp_path):
     append_record(tmp_path, record("run-1", True, 10.0))
     failed = record("run-2", False, 20.0, collision_free=False)

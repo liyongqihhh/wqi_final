@@ -204,7 +204,8 @@ class MissionMetricsCollector:
             self.latest_docked = value
             if self.active and previous is True and value is False:
                 self.record.detach_success = True
-            if self.active and previous is False and value is True:
+            if (self.active and self.record.detach_success
+                    and previous is False and value is True):
                 self.record.redock_success = True
 
     def update_replans(self, count: int) -> None:
@@ -297,8 +298,6 @@ class MissionMetricsCollector:
             record.initial_uav_soc = self.latest_battery_soc
             record.initial_ugv_drive_soc = self.latest_ugv_drive_soc
             record.initial_ugv_charging_soc = self.latest_ugv_charging_soc
-            if self.latest_docked:
-                record.redock_success = True
 
     def mark_ugv_endpoint(self, target, target_name=None) -> None:
         with self.lock:
@@ -355,6 +354,7 @@ class MissionMetricsCollector:
                 if record.wall_duration_s > 0.0 else 0.0
             )
             record.phase_durations_s = dict(sorted(self._phase_durations.items()))
+            record.charging_wait_s = record.phase_durations_s.get("CHARGING", 0.0)
             record.ugv_path_length_m = self.ugv_path.length_m
             record.uav_path_length_m = self.uav_path.length_m
             if (
@@ -399,10 +399,9 @@ class MissionMetricsCollector:
                 )
             # Energy delivered from the UGV charging pack is already counted
             # at its source. Subtract UAV charged energy to avoid double count.
-            record.total_energy_wh = record.ugv_energy_wh + max(
-                0.0,
-                record.uav_energy_wh - record.uav_charged_wh,
-            )
+            record.total_energy_wh = max(0.0, (
+                record.ugv_energy_wh + record.uav_energy_wh - record.uav_charged_wh
+            ))
             if record.completed_targets > 0:
                 record.delivery_rate_per_min = (
                     record.completed_targets * 60.0 / record.sim_duration_s

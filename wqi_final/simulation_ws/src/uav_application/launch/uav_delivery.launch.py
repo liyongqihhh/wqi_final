@@ -12,6 +12,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
+    flight_backend = LaunchConfiguration("flight_backend")
     initial_battery_percentage = LaunchConfiguration(
         "initial_battery_percentage"
     )
@@ -34,6 +35,11 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument("use_sim_time", default_value="true"),
+        DeclareLaunchArgument("enable_sim_velocity_aiding", default_value="false"),
+        DeclareLaunchArgument("use_carrier_home", default_value="false"),
+        DeclareLaunchArgument(
+            "flight_backend", default_value="px4", choices=["px4"]
+        ),
         DeclareLaunchArgument(
             "initial_battery_percentage", default_value="0.80"
         ),
@@ -47,9 +53,11 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(control_launch),
             launch_arguments={
                 "use_sim_time": use_sim_time,
+                "flight_backend": flight_backend,
                 "initial_battery_percentage": initial_battery_percentage,
                 "enable_energy_constraints": enable_energy_constraints,
                 "external_charger_control": external_charger_control,
+                "enable_sim_velocity_aiding": LaunchConfiguration("enable_sim_velocity_aiding"),
             }.items(),
         ),
         IncludeLaunchDescription(
@@ -67,6 +75,9 @@ def generate_launch_description():
                 "energy_constraints_enabled": ParameterValue(
                     enable_energy_constraints, value_type=bool
                 ),
+                "flight_backend": flight_backend,
+                "use_carrier_home": ParameterValue(
+                    LaunchConfiguration("use_carrier_home"), value_type=bool),
             }],
         ),
     ])
