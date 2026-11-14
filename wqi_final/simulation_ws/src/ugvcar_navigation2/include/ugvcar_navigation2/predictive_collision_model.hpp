@@ -27,6 +27,7 @@ struct PredictiveCollisionResult
 {
   double earliest_collision_time{std::numeric_limits<double>::infinity()};
   double minimum_clearance{std::numeric_limits<double>::infinity()};
+  double collision_exposure{0.0};
 };
 
 PredictiveCollisionResult evaluatePredictiveCollision(
@@ -41,6 +42,12 @@ double predictiveTrajectoryScore(
   double horizon,
   double preferred_clearance,
   double clearance_weight);
+
+double collisionFreeMotionPenalty(
+  const PredictiveCollisionResult & result,
+  double progress_speed,
+  double minimum_speed,
+  double weight);
 
 }  // namespace ugvcar_navigation2
 

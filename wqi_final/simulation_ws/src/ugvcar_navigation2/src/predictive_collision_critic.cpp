@@ -45,6 +45,22 @@ void PredictiveCollisionCritic::onInit()
   node->get_parameter(prefix + "prediction_horizon", prediction_horizon_);
   node->get_parameter(prefix + "preferred_clearance", preferred_clearance_);
   node->get_parameter(prefix + "clearance_weight", clearance_weight_);
+  nav2_util::declare_parameter_if_not_declared(
+    node, prefix + "motion_preference_weight", rclcpp::ParameterValue(0.0));
+  nav2_util::declare_parameter_if_not_declared(
+    node, prefix + "motion_preference_distance", rclcpp::ParameterValue(4.0));
+  nav2_util::declare_parameter_if_not_declared(
+    node, prefix + "motion_preference_min_speed", rclcpp::ParameterValue(0.05));
+  node->get_parameter(prefix + "motion_preference_weight", motion_preference_weight_);
+  node->get_parameter(prefix + "motion_preference_distance", motion_preference_distance_);
+  node->get_parameter(prefix + "motion_preference_min_speed", motion_preference_min_speed_);
+  if (!std::isfinite(motion_preference_weight_) || motion_preference_weight_ < 0.0 ||
+    motion_preference_weight_ + clearance_weight_ >= 1.0 ||
+    !std::isfinite(motion_preference_distance_) || motion_preference_distance_ <= 0.0 ||
+    !std::isfinite(motion_preference_min_speed_) || motion_preference_min_speed_ <= 0.0)
+  {
+    throw std::runtime_error("Predictive motion preference parameters are invalid");
+  }
   if (
     robot_radius_ <= 0.0 || safety_margin_ < 0.0 ||
     track_timeout_ <= 0.0 || prediction_horizon_ <= 0.0 ||
@@ -74,6 +90,7 @@ void PredictiveCollisionCritic::onInit()
 
 void PredictiveCollisionCritic::reset()
 {
+  motion_preference_active_ = false;
   prepared_obstacles_.clear();
   evaluations_.clear();
 }
@@ -81,10 +98,12 @@ void PredictiveCollisionCritic::reset()
 bool PredictiveCollisionCritic::prepare(
   const geometry_msgs::msg::Pose2D & pose,
   const nav_2d_msgs::msg::Twist2D &,
-  const geometry_msgs::msg::Pose2D &,
+  const geometry_msgs::msg::Pose2D & goal,
   const nav_2d_msgs::msg::Path2D &)
 {
   current_pose_ = pose;
+  current_goal_ = goal;
+  motion_preference_active_ = false;
   evaluations_.clear();
   ugvcar_navigation2_interfaces::msg::DynamicObstacleArray tracks;
   {
@@ -109,6 +128,14 @@ bool PredictiveCollisionCritic::prepare(
   }
   try {
     prepared_obstacles_ = transformTracks(tracks, age);
+    if (motion_preference_weight_ > 0.0 && std::hypot(goal.x - pose.x, goal.y - pose.y) > 0.6) {
+      motion_preference_active_ = std::any_of(
+        prepared_obstacles_.begin(), prepared_obstacles_.end(),
+        [&](const MovingCircle2D & obstacle) {
+          return std::hypot(obstacle.x - pose.x, obstacle.y - pose.y) - obstacle.radius <
+          motion_preference_distance_;
+        });
+    }
   } catch (const tf2::TransformException & exception) {
     prepared_obstacles_.clear();
     RCLCPP_WARN_THROTTLE(
@@ -145,14 +172,29 @@ double PredictiveCollisionCritic::scoreTrajectory(
     robot_radius_,
     safety_margin_,
     prediction_horizon_);
+  double progress_speed = 0.0;
+  if (!trajectory.poses.empty() && !trajectory.time_offsets.empty()) {
+    const double duration = rclcpp::Duration(trajectory.time_offsets.back()).seconds();
+    const auto & end = trajectory.poses.back();
+    if (duration > 1.0e-6) {
+      progress_speed =
+        (std::hypot(current_goal_.x - current_pose_.x, current_goal_.y - current_pose_.y) -
+        std::hypot(current_goal_.x - end.x, current_goal_.y - end.y)) / duration;
+    }
+  }
   evaluations_.push_back(
     CandidateEvaluation{
       trajectory.velocity.x,
       trajectory.velocity.theta,
       result.earliest_collision_time,
-      result.minimum_clearance});
+      result.minimum_clearance,
+      progress_speed,
+      result.collision_exposure});
   return predictiveTrajectoryScore(
-    result, prediction_horizon_, preferred_clearance_, clearance_weight_);
+    result, prediction_horizon_, preferred_clearance_, clearance_weight_) +
+         collisionFreeMotionPenalty(
+    result, progress_speed, motion_preference_min_speed_,
+    motion_preference_active_ ? motion_preference_weight_ : 0.0);
 }
 
 void PredictiveCollisionCritic::debrief(
@@ -190,6 +232,11 @@ void PredictiveCollisionCritic::debrief(
     stream << ";minimum_clearance=" << selected->minimum_clearance
            << ";collision_free="
            << (std::isfinite(selected->collision_time) ? "false" : "true");
+  }
+  stream << ";motion_preference_active=" << (motion_preference_active_ ? "true" : "false");
+  if (selected) {
+    stream << ";selected_goal_progress_speed=" << selected->goal_progress_speed;
+    stream << ";selected_collision_exposure=" << selected->collision_exposure;
   }
   status.data = stream.str();
   status_publisher_->publish(status);

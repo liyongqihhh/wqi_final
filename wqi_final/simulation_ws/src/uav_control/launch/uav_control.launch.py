@@ -39,6 +39,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("use_sim_time", default_value="true"),
         DeclareLaunchArgument("enable_sim_velocity_aiding", default_value="false"),
+        DeclareLaunchArgument("validate_dynamic_paths",default_value="false"),
         DeclareLaunchArgument(
             "flight_backend",
             default_value="px4",
@@ -60,6 +61,10 @@ def generate_launch_description():
             default_value="false",
             description="Allow an external UGV charging pack to gate UAV charging.",
         ),
+        DeclareLaunchArgument(
+            "start_battery_manager", default_value="true",
+            description="Disable only when an external finite-pack manager publishes /uav/battery_state.",
+        ),
         Node(
             package="uav_control",
             executable="px4_offboard_controller",
@@ -78,6 +83,7 @@ def generate_launch_description():
                     enable_energy_constraints, value_type=bool)},
                 {"enable_sim_velocity_aiding": ParameterValue(
                     LaunchConfiguration("enable_sim_velocity_aiding"), value_type=bool)},
+                {"validate_dynamic_paths":ParameterValue(LaunchConfiguration("validate_dynamic_paths"),value_type=bool)},
             ],
             condition=px4_selected,
         ),
@@ -115,7 +121,8 @@ def generate_launch_description():
             namespace="uav",
             name="safety_monitor",
             output="screen",
-            parameters=[config, {"use_sim_time": use_sim_time}],
+            parameters=[config, {"use_sim_time": use_sim_time,
+                "publish_obstacle_cloud":ParameterValue(LaunchConfiguration("validate_dynamic_paths"),value_type=bool)}],
         ),
         Node(
             package="uav_control",
@@ -123,7 +130,10 @@ def generate_launch_description():
             namespace="uav",
             name="battery_manager",
             output="screen",
-            condition=IfCondition(enable_energy_constraints),
+            condition=IfCondition(PythonExpression([
+                "'", enable_energy_constraints, "'.lower() == 'true' and '",
+                LaunchConfiguration("start_battery_manager"), "'.lower() == 'true'",
+            ])),
             parameters=[
                 battery_config,
                 {

@@ -40,7 +40,7 @@ def rviz_environment(driver):
 def prepare(context):
     from campus_regional_delivery.layout import RegionalLayout
     from campus_regional_delivery.fleet import (fleet_model,fleet_parameters,fleet_rviz,
-        prepare_uav_model,NAVIGATION_COMPONENTS)
+        prepare_uav_model,NAVIGATION_COMPONENTS,select_fleet)
     from cooperative_delivery.relay_vehicle import second_vehicle_remappings
     def share(name):
         return Path(get_package_share_directory(name))
@@ -72,6 +72,14 @@ def prepare(context):
     if delivery_mode not in ("cooperative","ugv_only"):
         raise ValueError("delivery_mode must be cooperative or ugv_only")
     with_uav=enabled("uav") and delivery_mode=="cooperative"
+    vehicles=select_fleet(layout.vehicles,value("vehicle"),with_uav,enabled("start_mission_manager"))
+    energy_enabled=enabled("enable_energy_constraints")
+    dynamic_enabled=enabled("enable_dynamic_obstacles")
+    density=value("obstacle_density")
+    if density!="none" and not dynamic_enabled:
+        raise ValueError("A traffic density requires enable_dynamic_obstacles:=true")
+    if energy_enabled and len(vehicles)!=4:
+        raise ValueError("Regional energy accounting requires all four vehicles")
     assets = package/"assets"
     # Refuse stale generated assets instead of silently mixing coordinate sets.
     import hashlib,json
@@ -94,25 +102,47 @@ def prepare(context):
     original=xacro.process_file(str(share("ugvcar_description")/"urdf/ugvcar/ugvcar.urdf.xacro"),
         mappings={"visualize_sensor_rays":value("visualize_sensor_rays")}).toxml()
     original_params=yaml.safe_load((share("ugvcar_navigation2")/"config/nav2_params.yaml").read_text())
-    namespaces=[r["namespace"] for r in layout.vehicles.values()]
+    namespaces=[r["namespace"] for r in vehicles.values()]
     entities=[]
-    for r in layout.vehicles.values():
+    for r in vehicles.values():
         ns=r["namespace"]
         description=fleet_model(original,ns)
         params=generated/f"{ns}_nav2.yaml"
-        params.write_text(yaml.safe_dump(fleet_parameters(
+        navigation_data=fleet_parameters(
             original_params,share("ugvcar_navigation2"),ns,namespaces,
-            map_resolution=layout.resolution)))
+            map_resolution=layout.resolution,dynamic=dynamic_enabled)
+        if dynamic_enabled:
+            import xml.etree.ElementTree as ET
+            bt=ET.parse(share("ugvcar_navigation2")/"behavior_trees/navigate_to_pose_dynamic_replanning.xml")
+            for condition in bt.findall(".//DynamicObstacleChanged"):
+                condition.set("status_topic",f"/{ns}/ugv/dynamic_replanning/status")
+            for truncation in bt.findall(".//TruncatePathLocal"):
+                truncation.set("robot_frame",f"{ns}/base_link")
+            tree_file=generated/f"{ns}_dynamic_navigation.xml"
+            bt.write(tree_file,encoding="unicode")
+            navigation_data[ns]["bt_navigator"]["ros__parameters"]["default_nav_to_pose_bt_xml"]=str(tree_file)
+        params.write_text(yaml.safe_dump(navigation_data))
         entities.append(Node(package="robot_state_publisher",executable="robot_state_publisher",namespace=ns,
             name="robot_state_publisher",parameters=[{"use_sim_time":True,
             "robot_description":ParameterValue(description,value_type=str)}],output="screen"))
     rviz=generated/"regional.rviz"
-    rviz.write_text(yaml.safe_dump(fleet_rviz(yaml.safe_load((share("cooperative_delivery")/"rviz/cooperative.rviz").read_text()),layout.vehicles,with_uav)))
+    if value("rviz_config"):
+        rviz=Path(value("rviz_config"))
+        if not rviz.is_file():
+            raise ValueError("RViz configuration does not exist: "+str(rviz))
+    else:
+        rviz.write_text(yaml.safe_dump(fleet_rviz(yaml.safe_load((share("cooperative_delivery")/"rviz/cooperative.rviz").read_text()),vehicles,with_uav,energy_enabled,dynamic_enabled)))
     def include(path,arguments):
         return IncludeLaunchDescription(PythonLaunchDescriptionSource(str(path)),launch_arguments=arguments.items())
     entities += [RegisterEventHandler(OnProcessExit(on_exit=gazebo_exited)),
         include(share("gazebo_ros")/"launch/gazebo.launch.py",
         {"world":str(assets/"campus_regional.world"),"gui":value("gui"),"verbose":"true","server_required":"false"})]
+    energy_parameters={"use_sim_time":True,"energy_file":value("energy_file"),
+        "uav_energy_file":value("uav_energy_file"),"ugv_energy_file":value("ugv_energy_file")}
+    if energy_enabled:
+        entities.append(Node(package="campus_regional_delivery",executable="regional_energy_manager",
+            namespace="regional_delivery",name="energy_manager",output="screen",
+            parameters=[energy_parameters,{"with_uav":with_uav}]))
     shared=[]
     lifecycle=[]
     for name,topic,yaml_file in (("regional_map_server","/map","regional_map.yaml"),
@@ -130,6 +160,14 @@ def prepare(context):
     shared.append(Node(package="nav2_lifecycle_manager",executable="lifecycle_manager",name="regional_map_lifecycle",
         output="screen",parameters=[{"use_sim_time":True,"autostart":True,"node_names":lifecycle}]))
     entities += shared
+    traffic_actions=[]
+    if dynamic_enabled:
+        from campus_regional_delivery.dynamic_scenario import traffic_config
+        scenario_file=generated/"regional_obstacles.yaml"
+        scenario_file.write_text(yaml.safe_dump(traffic_config(layout)))
+        # Gated models stage outside corridors while robots/navigation load.
+        traffic_actions.append(include(share("campus_dynamic_obstacles")/"launch/dynamic_obstacles.launch.py",
+            {"config_file":str(scenario_file),"density":density,"random_seed":value("obstacle_seed")}))
     nav_stages=[]
     nodes=tuple((package,name) for name,(package,_) in NAVIGATION_COMPONENTS.items())
     for ns in namespaces:
@@ -137,6 +175,12 @@ def prepare(context):
         components=[]
         stage.append(Node(package="campus_regional_delivery",executable="regional_localizer",namespace=ns,
             output="screen",parameters=[{"use_sim_time":True}]))
+        if dynamic_enabled:
+            prediction_remaps=[(a,"/"+ns+b[len("/ugv_b"):])
+                               for a,b in second_vehicle_remappings(predictor=True)]
+            stage.append(Node(package="ugvcar_navigation2",executable="dynamic_obstacle_predictor.py",
+                name="dynamic_obstacle_predictor",namespace=ns,output="screen",remappings=prediction_remaps,
+                parameters=[{"use_sim_time":True,"robot_radius":.60,"safety_margin":.30}]))
         for pkg,exe in nodes:
             remaps=[(a,"/"+ns+b[len("/ugv_b"):]) for a,b in second_vehicle_remappings()]
             if exe in ("controller_server","behavior_server"):
@@ -175,6 +219,10 @@ def prepare(context):
         arguments=["-d",str(rviz)],parameters=[{"use_sim_time":True}],
         additional_env=rviz_environment(value("rviz_render_driver")),
         output="screen",condition=IfCondition(value("rviz")))])]
+    if dynamic_enabled:
+        extra.extend(traffic_actions)
+        extra.append(Node(package="campus_regional_delivery",executable="regional_dynamic_monitor",
+            namespace="regional_delivery",output="screen",parameters=[{"use_sim_time":True}]))
     aircraft_start=[]
     aircraft_inserted=[False]
     if with_uav:
@@ -197,15 +245,19 @@ def prepare(context):
                 arguments=["--frame-id","map","--child-frame-id","uav/odom"]),
             aircraft_spawn,
             include(share("uav_px4_bringup")/"launch/px4_sitl.launch.py",{
-                "px4_autopilot_dir":str(px4),"moving_base":"true","enable_energy_constraints":"false"}),
+                "px4_autopilot_dir":str(px4),"moving_base":"true","enable_energy_constraints":value("enable_energy_constraints")}),
             include(share("uav_control")/"launch/uav_control.launch.py",{
-                "enable_energy_constraints":"false","enable_sim_velocity_aiding":"true","use_sim_time":"true"})]
-    if with_uav or delivery_mode=="ugv_only":
+                "enable_energy_constraints":value("enable_energy_constraints"),"start_battery_manager":"false",
+                "validate_dynamic_paths":str(dynamic_enabled).lower(),
+                "enable_sim_velocity_aiding":"true","use_sim_time":"true"})]
+    if enabled("start_mission_manager") and (with_uav or delivery_mode=="ugv_only"):
         extra.append(Node(package="campus_regional_delivery",executable="regional_mission_manager",namespace="regional_delivery",
             name="mission_manager",output="screen",parameters=[{"use_sim_time":True,
-            "layout_file":value("layout_file"),"delivery_mode":delivery_mode}]))
+            "layout_file":value("layout_file"),"delivery_mode":delivery_mode,
+            "require_dynamic_traffic":dynamic_enabled,
+            "enable_energy_constraints":energy_enabled},energy_parameters]))
     spawns=[]
-    for r in layout.vehicles.values():
+    for r in vehicles.values():
         ns=r["namespace"]
         x,y,z,yaw=r["depot_pose"]
         spawns.append(Node(package="gazebo_ros",executable="spawn_entity.py",name="spawn_"+ns,output="screen",
@@ -254,8 +306,19 @@ def generate_launch_description():
         DeclareLaunchArgument("layout_file",default_value=str(share/"config/campus_regions.yaml")),
         DeclareLaunchArgument("gui",default_value="true"),DeclareLaunchArgument("rviz",default_value="true"),
         DeclareLaunchArgument("rviz_render_driver",default_value="softpipe",choices=["softpipe","llvmpipe"]),
+        DeclareLaunchArgument("rviz_config",default_value=""),
+        DeclareLaunchArgument("vehicle",default_value="all",choices=["all","ugv_00","ugv_01","ugv_02","ugv_03"]),
+        DeclareLaunchArgument("start_mission_manager",default_value="true"),
         DeclareLaunchArgument("uav",default_value="true"),
         DeclareLaunchArgument("delivery_mode",default_value="cooperative"),
+        DeclareLaunchArgument("enable_energy_constraints",default_value="false"),
+        DeclareLaunchArgument("enable_dynamic_obstacles",default_value="false"),
+        DeclareLaunchArgument("obstacle_density",default_value="none",
+            choices=["none","low","medium","high","very_high","extreme"]),
+        DeclareLaunchArgument("obstacle_seed",default_value="42"),
+        DeclareLaunchArgument("energy_file",default_value=str(share/"config/regional_energy.yaml")),
+        DeclareLaunchArgument("uav_energy_file",default_value=str(Path(get_package_share_directory("uav_control"))/"config/battery_model.yaml")),
+        DeclareLaunchArgument("ugv_energy_file",default_value=str(Path(get_package_share_directory("cooperative_delivery"))/"config/ugv_energy_model.yaml")),
         DeclareLaunchArgument("use_composition",default_value="true"),
         DeclareLaunchArgument("rmw_implementation",default_value=EnvironmentVariable(
             "RMW_IMPLEMENTATION",default_value="rmw_cyclonedds_cpp")),

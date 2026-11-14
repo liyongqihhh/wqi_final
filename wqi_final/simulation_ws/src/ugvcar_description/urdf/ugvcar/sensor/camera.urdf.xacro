@@ -4,24 +4,7 @@
     <xacro:macro name="camera_xacro" params="xyz">
         <!-- ============相机模块================ -->
         <link name="camera_link">
-            <visual>
-                <origin xyz="0 0 0.0" rpy="0 0 0" />
-                <geometry>
-                    <box size="0.02 0.10 0.02" />
-                </geometry>
-                <material name="black">
-                    <color rgba="0.0 0.0 0.0 0.8"/>
-                </material>
-            </visual>
-            <collision>
-                <origin xyz="0 0 0.0" rpy="0 0 0" />
-                <geometry>
-                    <box size="0.02 0.10 0.02" />
-                </geometry>
-                <material name="black">
-                    <color rgba="0.0 0.0 0.0 0.8"/>
-                </material>
-            </collision>
+            <!-- Preserve the camera data frame and inertia without a housing. -->
             <xacro:box_inertia m="0.01" w="0.02" h="0.10" d="0.02" />
         </link>
         <link name="camera_optical_link"></link>

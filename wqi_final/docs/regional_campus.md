@@ -47,7 +47,81 @@ A 点由旧草稿 (-28,22) 移至 (-18,22)，避免停在建筑支路中间；B/
 | C | `cafeteria` | -5,-52 | -5,-38 | 南 | 5 |
 | C | `gymnasium` | 36,-52 | 36,-66 | 北 | 3 |
 
-## 2. 两种启动模式
+## 取消与安全恢复
+
+当前四车协同入口为 `/regional_delivery/execute_mission`。任务执行中取消，或飞行/
+导航动作报错时，管理器会先取消运动、等待动作结果并停车，再处理仍在空中的 UAV。
+正常飞控下恢复到本段预先选定的接收车；必须通过停车、真实降落、捕获和实测稳定窗。
+若 PX4 已进入应急降落则等待原生降落，不用新的位置目标覆盖应急控制。
+接收车或航路不可用时尝试降落兜底，但只报告 `LANDED_UNDOCKED`，不伪造物理停靠。
+取消/失败订单的 Action 结果仍为 CANCELED/ABORTED，绝不会因回收成功变成完成。
+
+在已 source 工作空间、且 ROS_DOMAIN_ID/RMW 与仿真一致的终端执行：
+
+```bash
+ros2 service call /regional_delivery/execute_mission/_action/cancel_goal \
+  action_msgs/srv/CancelGoal "{}"
+```
+
+空请求按 ROS 2 标准语义取消该服务端全部活动目标；本管理器只允许一个活动订单。
+收到取消接受后，保持 Gazebo/PX4 运行，等待回收和最终 CANCELED 结果。
+
+状态话题 `/regional_delivery/recovery_status` 使用保留的 JSON 字符串，包含
+`status`、`reason`、`uav_state`、`carrier` 和 `target_carrier`。
+恢复期间仍占用任务服务器，UAV 未结束飞行/降落时拒绝新单；空中阶段地面导航保持
+暂停，未锁定时不自动恢复。恢复落到区域车不代表已返回总站：开始下一轮标准订单前，
+应重新准备总站初始装载场景。取消订单和关闭整套仿真是两种不同操作。
+
+退出使用与先前定位器一致的顺序：信号只请求停止，活动回调退出后再关闭 ROS。
+这项 Python 退出保护不代表已修复全部 RViz/Mesa 图形问题。
+
+2026-11-05：当前模型下创新中心三楼 0.30 kg 完整闭环通过；第二单在 15 m 悬停时
+取消，返回 A 车并验证锁定，订单仍为 CANCELED。两工况及正常退出记录见
+[`evaluation_report.md`](evaluation_report.md#2026-11-05-协同闭环与取消恢复)。
+最终 282 项源级测试、24 项独立入口兼容测试通过；后补未验证停靠不恢复导航的
+保守分支仅单测验证，未另跑整程，不能扩展为任意故障条件均通过。
+
+## 2. 启动模式
+
+### 五档空地动态交通
+
+新四车入口可追加 `enable_dynamic_obstacles:=true obstacle_density:=extreme`，
+与 `enable_energy_constraints:=true` 可同时开启。五个有效档位及关闭对照、实际遭遇
+触发、UGV 动态预测器、UAV 多障碍点云校验见
+[`regional_dynamic_obstacles.md`](regional_dynamic_obstacles.md)。原入口默认关闭动态
+交通；不改变原静态 Smac/RPP、道路、模型、传感器和九电池配置。
+
+### 四车九电池模式
+
+当前入口新增可选的四车能量系统：每车各有驱动和 UAV 充电电池，再加一块 UAV
+飞行电池。追加 `enable_energy_constraints:=true` 启用；默认关闭，不改变原无电量模式。
+任务使用原 `/regional_delivery/execute_mission`，无须改任务接口。
+初始电量、整单预检、按需充电、九电池状态及完整命令见
+[`regional_energy.md`](regional_energy.md)。原地图、导航速度与 PX4 控制参数保持不变。
+
+### 单车手动标点
+
+先关闭旧仿真，再执行：
+
+```bash
+cd ~/design_final/wqi_final/simulation_ws
+bash ./build_workspace.sh --packages-select campus_regional_delivery --executor sequential
+source ./setup_workspace.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ros2 launch campus_regional_delivery regional_ugv_navigation.launch.py
+```
+
+此入口默认只打开 RViz，后台仍运行 Gazebo 物理仿真；加 `gui:=true` 可同时打开
+Gazebo。默认仅生成 UGV-00；`vehicle:=ugv_01` 等可改选一辆区域车，不同时生成四车。
+不启动 UAV、PX4 或配送管理器，也不加载不存在车辆的占用层。
+
+RViz 只显示地图、车模、全局代价地图和黄色路径。用 **2D Goal Pose** 在道路上
+按住左键拖动朝向，松开即可导航。工具目标话题为所选车辆的 `/<namespace>/goal_pose`，
+不是根话题 `/goal_pose`；使用官方 Nav2 的目标订阅，不另建转换节点。
+固定坐标系仍为 `map`，使用现有真值定位，不需要 AMCL 初始位姿。
+局部代价地图后台保留，只有其显示关闭；地图、速度和规划控制参数未因此改变。
+
+### 四车协同与纯 UGV 对照
 
 首次安装官方中间件：`sudo apt install ros-humble-rmw-cyclonedds-cpp`。
 新入口默认选择 Cyclone DDS；所有任务/状态终端也必须使用相同实现。旧入口不强制
@@ -231,8 +305,9 @@ UAV 进近/着陆/解除武装 -> 连续稳定检查 -> 物理锁定 -> 模拟�
   打断准入；物理插件最终仍检查原始速率与原距离门限，不允许移动车辆强制锁定。
 - 装卸是明确标注 simulated 的任务/载荷事件，不是实体机械抓取或真实包裹转运。
 - 楼层高度沿用 1.6+3.2×(层数-1) m；新布局的全楼层整程仍待验收。
-- 本入口暂不接入四车九电池（四驱动、四充电源、一个 UAV）整程约束；旧双车五电池
-  功能保留在旧入口。没有完成新布局能耗统计、全局最优调度或正式对照实验矩阵。
+- 本入口可选启用四车九电池（四驱动、四充电源、一个 UAV）整程约束，见
+  [四车能量系统](regional_energy.md)。旧双车五电池保留在旧入口；新布局全局最优
+  调度、能耗标定与正式统计对照仍未完成。
 - 失败时取消活动导航/飞行并停车，空中自动回收与重启恢复尚未完整验证，不能
   无人值守连续批量运行。
 

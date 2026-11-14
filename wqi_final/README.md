@@ -45,6 +45,15 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ros2 launch campus_regional_delivery regional_campus.launch.py gui:=true rviz:=true
 ```
 
+需要四车九电池时，在上述启动命令末尾加 `enable_energy_constraints:=true`。
+命令、初始电量、低电拒单和充电测试见 [四车能量系统](docs/regional_energy.md)。
+
+**五档空地动态避障：**追加 `enable_dynamic_obstacles:=true obstacle_density:=extreme`。
+五个有效档位为 `low / medium / high / very_high / extreme`，关闭另用 `none`。
+最高档为 **18 个地面障碍＋15 个空中障碍**，空中路线穿过实际 15 m 航路，包含
+斜向升降穿越；不是沿用旧地图的少量远处障碍。完整启动、就绪检查、颜色/路径含义
+及验收边界见 [五档动态避障说明](docs/regional_dynamic_obstacles.md)。
+
 仅检查地图和四辆车时，在最后一条命令追加 `uav:=false`。
 `gui:=false`、`rviz:=false` 可分别关闭对应窗口；`visualize_sensor_rays:=true`
 只打开 Gazebo 雷达射线示意，默认关闭示意而不关闭传感器。
@@ -136,6 +145,34 @@ ros2 topic echo /regional_delivery/landing_status --qos-durability transient_loc
 并连续至少 0.5 仿真秒满足高度误差不超过 0.05 m、水平误差不超过 0.12 m。
 定位陈旧或仍悬在 0.8 m 时，即使收到 LANDED 状态也不能宣布最终完成。
 
+### 单 UGV 标点导航
+
+先用 Ctrl+C 关闭旧仿真。首次使用新增入口时先编译，然后启动：
+
+```bash
+cd ~/design_final/wqi_final/simulation_ws
+bash ./build_workspace.sh --packages-select campus_regional_delivery --executor sequential
+source ./setup_workspace.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ros2 launch campus_regional_delivery regional_ugv_navigation.launch.py
+```
+
+默认只打开 RViz 窗口，Gazebo 物理仿真在后台运行。需要同时显示 Gazebo 时，
+在最后一行命令末尾加 `gui:=true`。该入口只生成总站 UGV-00，不启动 UAV、
+PX4 或配送任务管理器；可用 `vehicle:=ugv_01`、`ugv_02`、`ugv_03` 改选一辆区域车。
+
+RViz 在导航就绪后打开，只显示静态地图、UGV 模型、全局代价地图和黄色规划路径。
+点击工具栏 **2D Goal Pose**，在可通行道路上按住鼠标左键，拖动箭头指定终点朝向，
+松开后即可规划并自动行驶。不需要设置 **2D Pose Estimate**；定位仍使用 Gazebo
+真值。局部代价地图仅隐藏显示，仍参与后台控制和避障，不能关闭其节点。
+
+UGV-00 的目标话题为 `/ugv_00/goal_pose`，规划路径为 `/ugv_00/plan`，全局代价地图为
+`/ugv_00/global_costmap/costmap`；选择其他车辆时相应前缀自动替换。可先在总站北侧
+连接道试一个近目标 `(-56, -24)`。不要把终点选在建筑、草坪或高代价不可通行区。
+
+2026-10-26 实测通过同一目标话题发送该近目标：真实车辆行驶后停车，Nav2 返回
+`SUCCEEDED`，终点水平误差约 0.258 m；本次未自动点击或截图桌面，详见实验报告。
+
 ### 纯 UGV 对照模式
 
 关闭上一套仿真后，使用同一张地图运行：
@@ -195,9 +232,77 @@ UAV 返航停靠总站，Action 为 SUCCEEDED。额外 5 仿真秒保持锁定�
 锁定。但 RViz 关闭时仍退出 -6，故 `functional_passed=true, passed=false`，不宣称
 图形退出稳定。原始数据、转角对照和降落曲线均保存在仓库外，详见同日实验报告。
 B 区整程、C 区其他楼栋/楼层、全部楼栋及重复动态实验仍需逐项验收。
-新入口尚未接入四车九电池联合约束，不移用旧双车能量结果。
+新入口现可通过 `enable_energy_constraints:=true` 开启四车九电池联合约束。
+默认仍关闭，保留原无电量模式；本次验证范围单独记录，不移用旧双车能量结果。
+完整命令、初始电量和充电策略配置见 [四车能量系统](docs/regional_energy.md)。
 完整坐标、命令、文件清单和验证记录见 [三区校园使用说明](docs/regional_campus.md)。
 不要同时启动下文旧地图入口；它们使用不同校园坐标。
+
+## 当前协同阶段与安全恢复
+
+独立功能的证据边界：独立 UAV 已完成教学楼三楼配送、返航和地面降落的一轮实测；
+UGV 已通过当前校园的实际目标导航及食堂往返专项。单个目标通过不代表全部楼栋、
+多订单或动态障碍矩阵已经验收。
+
+协同不再另建一套模型，使用上文当前分区入口：总站 UGV-00 承载 UAV，区域车接收，
+区域车行驶到楼下后停车，UAV 再完成楼层投递并落回同一车，最后返航总站车。
+起飞与落车期间 UGV 必须静止，继续保留真实 PX4、物理捕获和实测停靠验证。
+
+```bash
+# 终端一；先关闭独立 UAV/UGV 仿真
+cd ~/design_final/wqi_final/simulation_ws
+bash ./build_workspace.sh --packages-select uav_control campus_regional_delivery --executor sequential
+source ./setup_workspace.bash
+export ROS_DOMAIN_ID=0
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ros2 launch campus_regional_delivery regional_campus.launch.py gui:=true rviz:=true
+```
+
+```bash
+# 终端二；与终端一使用相同 ROS_DOMAIN_ID 和 RMW
+cd ~/design_final/wqi_final/simulation_ws
+source ./setup_workspace.bash
+export ROS_DOMAIN_ID=0
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ros2 action send_goal /regional_delivery/execute_mission \
+  cooperative_delivery_interfaces/action/ExecuteCooperativeDelivery \
+  "{targets: ['innovation_center'], target_floors: [3], payload_masses_kg: [0.30], return_home: true}" --feedback
+```
+
+本轮新增取消/失败恢复：先取消当前运动并停车，正常飞控下尝试返回已指定的静止
+接收车，按原门限降落并验证捕获；飞控已进入应急降落时不强行覆盖它。
+回收成功也不会把被取消或失败的订单改成成功。地面未锁定、接收车不可用等情况
+会明确报告；地面未锁定时不会自动恢复地面导航，需人工检查并重新准备场景。
+
+在同环境的第三个终端取消当前订单（该服务端同时只接受一个活动订单）：
+
+```bash
+ros2 service call /regional_delivery/execute_mission/_action/cancel_goal \
+  action_msgs/srv/CancelGoal "{}"
+```
+
+活动订单被接受取消时，回复包含 `goals_canceling`。保持仿真运行，等待安全恢复结束及
+原任务返回 CANCELED，不要通过关闭 Gazebo 来代替取消。
+
+```bash
+ros2 topic echo /regional_delivery/recovery_status --qos-durability transient_local
+```
+
+`DOCKED` 表示恢复流程通过原有实测停靠门限；`LANDED_UNDOCKED` 只表示已落地，
+不表示已连接 UGV。活动任务在恢复结束前保持占用；已有 UAV 仍在空中或降落时拒绝
+新任务。取消订单应使用 ROS Action 的取消接口；关闭整套 Gazebo/PX4 不等同于
+飞行中的安全回收测试。
+
+同时将正常飞控和协同管理器改为“结束回调、再销毁节点和 ROS 上下文”的退出顺序。
+地图、速度、Nav2 参数、实体模型和 PX4 控制增益均未因本轮改动而改变。
+完整运行与剩余风险见 [本轮实验记录](docs/evaluation_report.md#2026-11-05-协同闭环与取消恢复)。
+
+**2026-11-05 本轮结果：**创新中心三楼 0.30 kg 完整协同订单成功，UAV 最后返回并
+锁定总站车；第二个订单在真实空中悬停时取消，UAV 成功回收至静止 A 车，订单保持
+取消状态、完成目标 0。双窗口及四套导航正常退出。最终相关单测 282 项、独立 UAV
+兼容测试 24 项通过；正式包级汇总 287 条记录（含 5 个包装项），0 错误/失败/跳过。
+后补旧 carrier 放行保护的额外失败边界已做单测，未另跑整程；详见实验报告的版本边界。
+这是一轮静态单订单和一轮悬停取消专项，不是全区域动态、电量或统计矩阵全部验收。
 
 ## 兼容入口：双车接力（旧校园）
 
@@ -291,6 +396,10 @@ wqi_final/
 
 ## 2. 已实现功能
 
+- UGV 模型在 2026-10-26 调整：移除摄像头外观及碰撞盒，保留图像接口、TF 与原惯量；
+  IMU 安装点改为相对 `base_link` 的 `(0, 0, -0.03) m`，整个方块位于圆柱车体下半部。
+  车体、车轮、停机平台、导航参数和 UAV 模型不改。本次通过模型解析、SDF 校验与
+  相关回归测试，未将旧版本的整程配送结果当作新模型的整程验收。
 - 在 Gazebo 中建立包含 11 栋主要建筑、闭合道路、碰撞体和配送点的校园场景。
 - 阶段 1 至 5 使用 Nav2 `SmacPlanner2D + Regulated Pure Pursuit` 完成稳定静态
   导航；阶段 6 切换为 `D* Lite + DWB`。D* Lite 复用上次搜索状态，只修复动态
@@ -303,6 +412,11 @@ wqi_final/
 - UAV 使用 PX4 SITL
   的状态估计、位置/姿态控制和电机输出，通过 Gazebo Classic Iris 电机插件驱动模型。
   不使用 `/set_entity_state` 持续修改坐标模拟飞行。
+- UAV 外观在 2026-10-26 简化为长方体机身、四根圆柱机臂、两侧滑橇与支撑脚、四个
+  圆盘旋翼；Gazebo 与 RViz 共享 `uav_description/config/uav_model.yaml` 的外观尺寸。
+  只替换外观，不改实际 PX4 模型的质量、惯量、碰撞体、关节、传感器或飞控参数。
+  脚架最低点保留在机体坐标 `z=-0.055 m`，避免外观伸入停机平台；原接触高度不变。
+  本次通过模型/TF 前后对比、SDF 校验和相关测试，未重新执行整程配送或飞行验收。
 - UAV 配备顶部 3D 雷达、下视相机、下向测距、四个斜下短距传感器和 IMU。
 - UAV 顶部 3D 雷达持续判断三维轨迹冲突，每 `0.5 s` 生成平滑绕障路径并通过前视
   点跟随黄色 `/uav/replanned_path`；`1.8 m` 三维安全球用于紧急保护。持续阻塞时
@@ -317,7 +431,7 @@ wqi_final/
   剩余货物质量和停靠 UAV 质量变化；充电电池只通过充电转换器向 UAV 供能。
 - 协同任务开始前同时检查 UAV 架次能量、UGV 完整道路行程能量和有限充电电池预算，
   任一电池低于任务需求与安全储备时均拒绝任务。
-- 支持 `none`、`low`、`medium`、`high` 四档可复现动态障碍场景。
+- 当前四车校园支持五档空地动态障碍：`low`、`medium`、`high`、`very_high`、`extreme`，另有 `none` 对照。旧校园兼容入口仍保留原四档配置。
 - 支持 UGV、UAV、空地协同三种模式的自动实验，输出任务成功率、真实动态避障
   成功率、时间、路径、误差、恢复次数、重规划次数、能耗、SOC、最小净空和碰撞
   事件数。即使 Action 返回成功，检测到物理包络相交时该次实验仍判定为失败。
@@ -484,7 +598,42 @@ ros2 topic echo /fmu/out/vehicle_status_v1 --once
 原路径和归档路径；最近日志和已归档的回归原始记录没有删除。读取旧 ULog 前，可用
 `gzip -dk <文件>.ulg.gz` 解压到归档旁边，不应把归档当成无用缓存删除。
 
-## 4. 四档动态障碍启动方法
+## 4. 动态障碍启动方法
+
+本轮最终完整测试为 **862 条记录、0 错误、0 失败、23 跳过**。
+单车移动障碍专项及独立 PX4 三维绕障/降落专项已通过；最高档四车、33 个障碍、
+九电池与 PX4 联合启动检查通过，但出现遥测延迟和强制退出，完整协同配送尚未
+通过验收。不能把加载就绪等同于配送成功。见 [动态避障验收记录](docs/regional_dynamic_acceptance.md)。
+
+**2026-11-14 已知问题：**最高档实验楼三楼双界面复测未通过。UAV 已飞至 A 区车并完成
+停靠交接，但安全球间距不足；UGV 在道路边缘持续往复、规划起点不可通行，本轮按卡滞
+失败主动取消，未完成三楼投递和返航。取消后另发生一次地面接触，不能混算为正常导航
+中的碰撞。本次提交保留现状及失败说明，不是最高档已验收的稳定版本。
+
+### 当前四车校园：五档空地交通
+
+本轮新功能使用 `campus_regional_delivery`，不是下方的旧双车兼容入口。
+五档地面/空中数量分别为 **6/3、9/6、12/9、15/12、18/15**，三个区域均有交通。
+空中路线横穿实际 15 m 巡航段，包括斜向升降穿越；机器人接近后一次触发，
+随后障碍沿固定路线运动，不主动让路。
+
+```bash
+cd ~/design_final/wqi_final/simulation_ws
+source ./setup_workspace.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ros2 launch campus_regional_delivery regional_campus.launch.py \
+  enable_energy_constraints:=true enable_dynamic_obstacles:=true \
+  obstacle_density:=extreme obstacle_seed:=42 gui:=true rviz:=true
+```
+
+先确认 `/dynamic_obstacles/manifest` 的 `requested=33`、`spawned=33`、`failures=[]`，
+再发送 `/regional_delivery/execute_mission` 任务。四车各自启用 D* Lite＋预测式 DWB；
+UAV 采用基于三维点云的局部体素 Dijkstra 绕行。新鲜传感器/安全路径不可用时等待，
+不强行穿越。RViz 黄色 UAV 路线是重规划路径，灰色是名义航段。
+完整三终端命令、其余档位、检测与验收限制见
+[五档动态避障说明](docs/regional_dynamic_obstacles.md)。
+
+### 旧校园兼容配置
 
 动态障碍共有四档。障碍是带碰撞体的 Gazebo 实体，通过物理速度沿固定路线往返，
 不是连续修改坐标的动画。相同 `random_seed` 会选择相同路线，便于重复实验。
@@ -499,7 +648,7 @@ ros2 topic echo /fmu/out/vehicle_status_v1 --once
 | `medium` | 5 | 1 | 6 | 中密度空地障碍 |
 | `high` | 8 | 2 | 10 | 高密度压力测试 |
 
-### 4.1 使用联合启动文件打开
+### 4.1 旧双车联合启动文件
 
 阶段 6 必须由联合启动文件同时启用动态障碍、UGV 360 度动态障碍预测器和 UAV
 3D 雷达重规划器。不要先按静态阶段启动后再单独追加障碍生成器，否则机器人侧的
@@ -580,7 +729,7 @@ ros2 topic echo /uav/dynamic_replanning/count
 ros2 topic echo /uav/replanned_path
 ```
 
-### 4.2 一条命令自动启动、运行任务并保存结果
+### 4.2 旧校园自动启动、运行任务并保存结果
 
 下面四条命令会自动启动协同仿真、生成指定密度障碍、执行教学楼配送、记录指标，
 任务完成后自动关闭该批次。`gui:=true rviz:=false` 用于在 Gazebo 中观察障碍；在

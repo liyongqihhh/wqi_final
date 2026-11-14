@@ -14,6 +14,11 @@ class ObstacleRoute:
     radius_m: float
     height_m: float
     waypoints: tuple[tuple[float, float, float], ...]
+    group: str = ""
+    priority: int = 1
+    activation_models: tuple[str, ...] = ()
+    activation_point: tuple[float, float, float] = (0., 0., 0.)
+    activation_distance: float = 0.
 
 
 class ObstacleScenarioError(ValueError):
@@ -47,6 +52,10 @@ def load_obstacle_config(path):
                 tuple(float(value) for value in waypoint)
                 for waypoint in raw["waypoints"]
             )
+            models = tuple(str(v) for v in raw.get("activation_models", ()))
+            activation_point = tuple(float(v) for v in raw.get("activation_point", (0,0,0)))
+            activation_distance = float(raw.get("activation_distance", 0.))
+            priority = int(raw.get("priority", 1))
         except (KeyError, TypeError, ValueError) as error:
             raise ObstacleScenarioError(
                 f"Invalid obstacle route '{name}': {error}"
@@ -55,7 +64,12 @@ def load_obstacle_config(path):
             raise ObstacleScenarioError(
                 f"Route '{name}' layer must be ground or air"
             )
-        values = (speed, radius, height, *(item for point in waypoints for item in point))
+        if any(len(point)!=3 for point in waypoints) or len(activation_point)!=3:
+            raise ObstacleScenarioError(f"Route '{name}' requires xyz coordinates")
+        if activation_distance < 0 or (models and activation_distance <= 0) or any(not v for v in models):
+            raise ObstacleScenarioError(f"Route '{name}' has an invalid activation gate")
+        values = (speed, radius, height, activation_distance, *activation_point,
+                  *(item for point in waypoints for item in point))
         if not all(math.isfinite(value) for value in values):
             raise ObstacleScenarioError(f"Route '{name}' contains non-finite values")
         if min(speed, radius, height) <= 0.0 or len(waypoints) < 2:
@@ -67,6 +81,9 @@ def load_obstacle_config(path):
             radius_m=radius,
             height_m=height,
             waypoints=waypoints,
+            group=str(raw.get("group", "")), priority=priority,
+            activation_models=models, activation_point=activation_point,
+            activation_distance=activation_distance,
         ))
     return densities, tuple(routes)
 
@@ -91,6 +108,21 @@ def select_routes(densities, routes, density: str, random_seed: int):
                 f"Density '{name}' requests {count} {layer} routes, "
                 f"but {len(candidates)} are available"
             )
-        selected.extend(generator.sample(candidates, count))
+        if candidates and all(route.group for route in candidates):
+            # Every region receives traffic, and higher densities are strict
+            # supersets for the same seed. Core crossings precede extra routes.
+            groups = {}
+            for group in sorted({route.group for route in candidates}):
+                ordered=[]
+                for priority in sorted({r.priority for r in candidates if r.group==group}):
+                    bucket=[r for r in candidates if r.group==group and r.priority==priority]
+                    random.Random(f"{random_seed}:{layer}:{group}:{priority}").shuffle(bucket)
+                    ordered.extend(bucket)
+                groups[group]=ordered
+            ordered=[group[i] for i in range(max(map(len,groups.values())))
+                     for group in groups.values() if i < len(group)]
+            selected.extend(ordered[:count])
+        else:
+            selected.extend(generator.sample(candidates, count))
     generator.shuffle(selected)
     return tuple(selected)

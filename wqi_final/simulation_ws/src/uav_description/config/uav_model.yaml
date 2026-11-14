@@ -1,1 +1,21 @@
 namespace: /uav
+visual:
+  body_size: [0.24, 0.18, 0.05]
+  body_z: 0.015
+  arm_radius: 0.014
+  leg_radius: 0.007
+  leg_length: 0.037
+  leg_z: -0.0285
+  leg_x: 0.09
+  skid_y: 0.075
+  skid_radius: 0.008
+  skid_length: 0.28
+  skid_z: -0.047
+  rotor_radius: 0.128
+  rotor_thickness: 0.005
+  # Keep these aligned with the pinned PX4 Iris motor-link poses.
+  rotor_positions:
+    - [0.13, -0.22, 0.023]
+    - [-0.13, 0.20, 0.023]
+    - [0.13, 0.22, 0.023]
+    - [-0.13, -0.20, 0.023]

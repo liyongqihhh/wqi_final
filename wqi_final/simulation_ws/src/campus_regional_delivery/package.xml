@@ -8,9 +8,12 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>
   <exec_depend>cooperative_delivery</exec_depend>
+  <exec_depend>campus_dynamic_obstacles</exec_depend>
   <exec_depend>cooperative_delivery_interfaces</exec_depend>
   <exec_depend>uav_interfaces</exec_depend>
   <exec_depend>uav_control</exec_depend>
+  <exec_depend>uav_application</exec_depend>
+  <exec_depend>uav_navigation</exec_depend>
   <exec_depend>uav_description</exec_depend>
   <exec_depend>uav_px4_bringup</exec_depend>
   <exec_depend>ugvcar_description</exec_depend>
@@ -20,6 +23,7 @@
   <exec_depend>nav2_map_server</exec_depend>
   <exec_depend>nav2_lifecycle_manager</exec_depend>
   <exec_depend>gazebo_ros</exec_depend>
+  <exec_depend>gazebo_msgs</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>rmw_cyclonedds_cpp</exec_depend>
@@ -35,6 +39,7 @@
   <exec_depend>rviz2</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <depend>std_srvs</depend>
   <depend>lifecycle_msgs</depend>

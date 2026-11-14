@@ -1,0 +1,16 @@
+# Fractions are 0..1, not percentages. The physical power coefficients remain
+# in uav_control/config/battery_model.yaml and cooperative_delivery/config/ugv_energy_model.yaml.
+uav_initial_soc: 0.80
+initial_drive_soc: {ugv_00: 0.80, ugv_01: 0.80, ugv_02: 0.80, ugv_03: 0.80}
+initial_charging_soc: {ugv_00: 0.80, ugv_01: 0.80, ugv_02: 0.80, ugv_03: 0.80}
+charging_policy: as_needed
+idle_charge_target_soc: 0.80
+telemetry_timeout_sim_s: 3.0
+telemetry_timeout_wall_s: 30.0
+integration_step_s: 0.25
+update_rate_hz: 10.0
+publish_rate_hz: 2.0
+parked_service_allowance_s: 5.0
+drive_turn_allowance_s: 10.0
+flight_time_margin: 1.25
+maximum_acceleration_mps2: 20.0

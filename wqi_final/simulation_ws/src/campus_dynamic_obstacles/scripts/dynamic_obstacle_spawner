@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import json
 import xml.sax.saxutils
 
 from ament_index_python.packages import get_package_share_directory
@@ -47,6 +48,7 @@ class DynamicObstacleSpawner(Node):
         self.create_timer(0.5, self._spawn_once)
         self.pending = 0
         self.failures = []
+        self.next_route_index = 0
 
     @staticmethod
     def _sdf(name, route) -> str:
@@ -55,6 +57,13 @@ class DynamicObstacleSpawner(Node):
             f"      <waypoint>{x:.3f} {y:.3f} {z:.3f}</waypoint>"
             for x, y, z in route.waypoints
         )
+        gate = ""
+        if route.activation_models:
+            gate = "\n".join(f"<activation_model>{xml.sax.saxutils.escape(model)}</activation_model>"
+                             for model in route.activation_models)
+            gate += "\n<activation_point>"+" ".join(map(str,route.activation_point))+"</activation_point>"
+            gate += f"\n<activation_distance>{route.activation_distance}</activation_distance>"
+            gate += "\n<activation_minimum_speed>0.05</activation_minimum_speed>"
         if route.layer == "air":
             geometry = (
                 f"<sphere><radius>{route.radius_m:.3f}</radius></sphere>"
@@ -70,6 +79,15 @@ class DynamicObstacleSpawner(Node):
             color = "0.95 0.72 0.08 1"
         x, y, z = route.waypoints[0]
         mass = 1.0 if route.layer == "ground" else 0.5
+        contact = ""
+        if route.group:
+            contact=f"""<sensor name='contacts' type='contact'>
+      <always_on>true</always_on><update_rate>10</update_rate>
+      <contact><collision>collision</collision></contact>
+      <plugin name='contact_events_{escaped_name}' filename='libgazebo_ros_bumper.so'>
+        <ros><remapping>bumper_states:=/dynamic_obstacles/{escaped_name}/contacts</remapping></ros>
+        <frame_name>world</frame_name>
+      </plugin></sensor>"""
         return f"""<?xml version='1.0'?>
 <sdf version='1.6'>
   <model name='{escaped_name}'>
@@ -84,12 +102,14 @@ class DynamicObstacleSpawner(Node):
         <geometry>{geometry}</geometry>
         <material><ambient>{color}</ambient><diffuse>{color}</diffuse></material>
       </visual>
+      {contact}
     </link>
     <plugin name='route_controller' filename='libcampus_dynamic_obstacle_plugin.so'>
       <speed>{route.speed_mps:.3f}</speed>
       <arrival_tolerance>0.25</arrival_tolerance>
       <max_acceleration>1.20</max_acceleration>
 {points}
+{gate}
     </plugin>
     <plugin name='ground_truth_{escaped_name}' filename='libgazebo_ros_p3d.so'>
       <ros>
@@ -113,18 +133,18 @@ class DynamicObstacleSpawner(Node):
         if self.pending == 0:
             self._publish_result()
             return
-        for index, route in enumerate(self.routes, start=1):
-            name = obstacle_instance_name(index, route)
-            request = SpawnEntity.Request()
-            request.name = name
-            request.xml = self._sdf(name, route)
-            request.robot_namespace = "/dynamic_obstacles"
-            future = self.client.call_async(request)
-            future.add_done_callback(
-                lambda completed, obstacle=name, selected=route: self._spawn_done(
-                    completed, obstacle, selected
-                )
-            )
+        self._spawn_next()
+
+    def _spawn_next(self):
+        # The Gazebo service has a bounded DDS history. A burst larger than
+        # that history can drop middle requests and leave their futures pending.
+        index=self.next_route_index
+        route=self.routes[index]
+        self.next_route_index+=1
+        name=obstacle_instance_name(index+1,route)
+        request=SpawnEntity.Request(name=name,xml=self._sdf(name,route),robot_namespace="/dynamic_obstacles")
+        future=self.client.call_async(request)
+        future.add_done_callback(lambda completed:self._spawn_done(completed,name,route))
 
     def _spawn_done(self, future, name, route) -> None:
         try:
@@ -142,6 +162,8 @@ class DynamicObstacleSpawner(Node):
         self.pending -= 1
         if self.pending == 0:
             self._publish_result()
+        else:
+            self._spawn_next()
 
     def _publish_result(self) -> None:
         description = (
@@ -153,6 +175,17 @@ class DynamicObstacleSpawner(Node):
         else:
             self.get_logger().info(description)
         self.scenario_pub.publish(String(data=description))
+        details = {"density":self.density,"seed":self.seed,"requested":len(self.routes),
+            "spawned":len(self.routes)-len(self.failures),"failures":self.failures,
+            "routes":[{"model":obstacle_instance_name(i,r),"route":r.name,"layer":r.layer,
+                       "region":r.group,"gate":r.activation_point,"radius":r.radius_m,
+                       "speed_mps":r.speed_mps,"waypoints":r.waypoints}
+                      for i,r in enumerate(self.routes,1)]}
+        if not hasattr(self,"manifest_pub"):
+            self.manifest_pub=self.create_publisher(String,"/dynamic_obstacles/manifest",
+                QoSProfile(depth=1,reliability=ReliabilityPolicy.RELIABLE,
+                           durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        self.manifest_pub.publish(String(data=json.dumps(details)))
         self.count_pub.publish(
             Int32(data=len(self.routes) - len(self.failures))
         )

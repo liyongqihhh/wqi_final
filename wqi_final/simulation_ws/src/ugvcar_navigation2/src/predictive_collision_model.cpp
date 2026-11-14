@@ -32,7 +32,6 @@ void evaluateSegment(
   if (start_distance <= combined_radius) {
     result.earliest_collision_time = std::min(
       result.earliest_collision_time, start.time);
-    return;
   }
   if (duration <= kEpsilon) {
     return;
@@ -45,6 +44,8 @@ void evaluateSegment(
   const double speed_squared =
     relative_vx * relative_vx + relative_vy * relative_vy;
   if (speed_squared <= kEpsilon) {
+    result.collision_exposure += duration * std::clamp(
+      1.0 - start_distance / combined_radius, 0.0, 1.0);
     return;
   }
 
@@ -58,6 +59,26 @@ void evaluateSegment(
   result.minimum_clearance = std::min(
     result.minimum_clearance,
     std::hypot(closest_x, closest_y) - combined_radius);
+
+  // TTC is zero for every candidate if the robot already touches the soft
+  // safety envelope. Keep evaluating the future: otherwise escaping and
+  // deepening penetration are indistinguishable to the controller.
+  if (std::hypot(closest_x, closest_y) < combined_radius) {
+    const int steps = std::max(1, static_cast<int>(std::ceil(duration / 0.1)));
+    const double step = duration / steps;
+    auto deficit = [&](const double t) {
+        return std::clamp(
+          1.0 - std::hypot(
+            relative_x + relative_vx * t, relative_y + relative_vy * t) / combined_radius,
+          0.0, 1.0);
+      };
+    double previous = deficit(0.0);
+    for (int i = 1; i <= steps; ++i) {
+      const double next = deficit(i * step);
+      result.collision_exposure += 0.5 * (previous + next) * step;
+      previous = next;
+    }
+  }
 
   const double b = 2.0 * (
     relative_x * relative_vx + relative_y * relative_vy);
@@ -146,6 +167,7 @@ PredictiveCollisionResult evaluatePredictiveCollision(
       evaluateSegment(last, last, obstacle, combined_radius, result);
     }
   }
+  result.collision_exposure /= horizon;
   return result;
 }
 
@@ -167,7 +189,8 @@ double predictiveTrajectoryScore(
       result.earliest_collision_time / horizon, 0.0, 1.0);
     // Every collision-free candidate scores below one. If every candidate
     // collides, the smallest value is the trajectory with the largest TTC.
-    return 1.0 + (1.0 - normalized_time);
+    return 1.0 + (1.0 - normalized_time) +
+           (result.earliest_collision_time <= kEpsilon ? 0.25 * result.collision_exposure : 0.0);
   }
   if (!std::isfinite(result.minimum_clearance)) {
     return 0.0;
@@ -177,6 +200,26 @@ double predictiveTrajectoryScore(
     0.0,
     1.0);
   return clearance_weight * clearance_deficit;
+}
+
+double collisionFreeMotionPenalty(
+  const PredictiveCollisionResult & result,
+  const double progress_speed,
+  const double minimum_speed,
+  const double weight)
+{
+  if (!std::isfinite(progress_speed) || !std::isfinite(minimum_speed) ||
+    !std::isfinite(weight) || minimum_speed <= 0.0 || weight < 0.0 || weight >= 1.0)
+  {
+    throw std::invalid_argument("Collision-free motion preference is invalid");
+  }
+  // Never reward colliding motion or alter the maximum-TTC fallback ranking.
+  if (std::isfinite(result.earliest_collision_time)) {
+    return 0.0;
+  }
+  // The caller supplies signed goal-progress speed, not wheel/body speed.
+  // Circling or moving away must not receive a progress reward.
+  return weight * (1.0 - std::clamp(progress_speed / minimum_speed, 0.0, 1.0));
 }
 
 }  // namespace ugvcar_navigation2

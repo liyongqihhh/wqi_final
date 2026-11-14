@@ -2,6 +2,7 @@
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <gazebo/common/Events.hh>
@@ -26,6 +27,17 @@ public:
     speed_ = std::max(0.01, speed_);
     tolerance_ = std::max(0.05, tolerance_);
     max_acceleration_ = std::max(0.1, max_acceleration_);
+    if (sdf->HasElement("activation_model")) {
+      auto entry = sdf->GetElement("activation_model");
+      while (entry) {
+        activation_models_.push_back(entry->Get<std::string>());
+        entry = entry->GetNextElement("activation_model");
+      }
+      activation_point_ = sdf->Get<ignition::math::Vector3d>("activation_point");
+      activation_distance_ = sdf->Get<double>("activation_distance");
+      activation_minimum_speed_ = sdf->Get<double>("activation_minimum_speed");
+      active_ = false;
+    }
 
     if (sdf->HasElement("waypoint")) {
       auto waypoint = sdf->GetElement("waypoint");
@@ -70,6 +82,30 @@ private:
     if (!model_ || waypoints_.empty()) {
       return;
     }
+    if (!active_) {
+      if (info.simTime.Double() >= last_gate_check_ &&
+        info.simTime.Double() - last_gate_check_ < 0.1) {return;}
+      last_gate_check_ = info.simTime.Double();
+      // A one-time experimental encounter trigger, never a yielding or
+      // pursuit controller. Once released, actors ignore all robot motion.
+      for (const auto & name : activation_models_) {
+        const auto robot = model_->GetWorld()->ModelByName(name);
+        if (robot && robot->WorldLinearVel().Length() >= activation_minimum_speed_ &&
+          robot->WorldPose().Pos().Distance(activation_point_) <= activation_distance_)
+        {
+          active_ = true;
+          gzmsg << "DYNAMIC_ENCOUNTER_ACTIVATED actor=" << model_->GetName()
+                << " trigger=" << name << " sim=" << info.simTime.Double() << "\n";
+          break;
+        }
+      }
+      if (!active_) {
+        model_->SetLinearVel(ignition::math::Vector3d::Zero);
+        model_->SetAngularVel(ignition::math::Vector3d::Zero);
+        last_update_time_seconds_ = info.simTime.Double();
+        return;
+      }
+    }
     const auto position = model_->WorldPose().Pos();
     auto delta = waypoints_[target_index_] - position;
     if (delta.Length() <= tolerance_) {
@@ -112,6 +148,12 @@ private:
   double tolerance_{0.25};
   double max_acceleration_{1.2};
   double last_update_time_seconds_{-1.0};
+  bool active_{true};
+  std::vector<std::string> activation_models_;
+  ignition::math::Vector3d activation_point_;
+  double activation_distance_{0.0};
+  double activation_minimum_speed_{0.05};
+  double last_gate_check_{-1.0};
 };
 
 GZ_REGISTER_MODEL_PLUGIN(CampusDynamicObstaclePlugin)

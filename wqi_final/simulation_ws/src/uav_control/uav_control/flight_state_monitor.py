@@ -76,13 +76,5 @@ class FlightStateMonitor(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
-    node = FlightStateMonitor()
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+    from uav_control.runtime import run_node
+    run_node(FlightStateMonitor, args=args)

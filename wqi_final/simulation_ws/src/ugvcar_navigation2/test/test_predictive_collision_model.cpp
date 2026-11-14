@@ -79,6 +79,18 @@ TEST(PredictiveCollisionModel, LongerHorizonRejectsWaitingForAnApproachingObstac
   EXPECT_NEAR(long_result.earliest_collision_time, 7.75, 1.0e-6);
 }
 
+TEST(PredictiveCollisionModel, ShortRolloutStillChecksLateEndpointCollision)
+{
+  const std::vector<TimedPoint2D> trajectory{{0.0, 0.0, 0.0}, {1.2, 0.0, 3.0}};
+  const std::vector<MovingCircle2D> obstacles{{6.0, 0.0, -0.6, 0.0, 0.45}};
+  const auto short_result = ugvcar_navigation2::evaluatePredictiveCollision(
+    trajectory, obstacles, 0.6, 0.3, 3.0);
+  const auto long_result = ugvcar_navigation2::evaluatePredictiveCollision(
+    trajectory, obstacles, 0.6, 0.3, 8.0);
+  EXPECT_FALSE(std::isfinite(short_result.earliest_collision_time));
+  EXPECT_NEAR(long_result.earliest_collision_time, 5.75, 1.0e-6);
+}
+
 TEST(PredictiveCollisionModel, ScoresWideClearanceBelowMarginalClearance)
 {
   const ugvcar_navigation2::PredictiveCollisionResult wide{
@@ -104,4 +116,66 @@ TEST(PredictiveCollisionModel, CollidingCandidateWithLongerTtcScoresLower)
       early, 4.0, 0.8, 0.0001),
     ugvcar_navigation2::predictiveTrajectoryScore(
       late, 4.0, 0.8, 0.0001));
+}
+
+TEST(PredictiveCollisionModel, CollisionFreeMotionPreferenceIsBoundedAndOptional)
+{
+  const ugvcar_navigation2::PredictiveCollisionResult safe{};
+  EXPECT_DOUBLE_EQ(
+    ugvcar_navigation2::collisionFreeMotionPenalty(safe, 0.0, 0.05, 0.00005),
+    0.00005);
+  EXPECT_DOUBLE_EQ(ugvcar_navigation2::collisionFreeMotionPenalty(safe, 0.05, 0.05, 0.00005), 0.0);
+  EXPECT_DOUBLE_EQ(ugvcar_navigation2::collisionFreeMotionPenalty(safe, 0.0, 0.05, 0.0), 0.0);
+  EXPECT_DOUBLE_EQ(
+    ugvcar_navigation2::collisionFreeMotionPenalty(
+      safe, -0.4, 0.05,
+      0.00005), 0.00005);
+}
+
+TEST(PredictiveCollisionModel, MotionPreferenceCannotOverrideCollisionOrTtcRanking)
+{
+  const ugvcar_navigation2::PredictiveCollisionResult safe{};
+  const ugvcar_navigation2::PredictiveCollisionResult collision{7.5, -0.1};
+  EXPECT_DOUBLE_EQ(
+    ugvcar_navigation2::collisionFreeMotionPenalty(
+      collision, 0.0, 0.05,
+      0.00005), 0.0);
+  const double stopped = ugvcar_navigation2::predictiveTrajectoryScore(safe, 8.0, 0.45, 0.0001) +
+    ugvcar_navigation2::collisionFreeMotionPenalty(safe, 0.0, 0.05, 0.00005);
+  EXPECT_LT(stopped, ugvcar_navigation2::predictiveTrajectoryScore(collision, 8.0, 0.45, 0.0001));
+}
+
+TEST(PredictiveCollisionModel, MotionPreferenceRejectsInvalidParameters)
+{
+  const ugvcar_navigation2::PredictiveCollisionResult safe{};
+  EXPECT_THROW(
+    ugvcar_navigation2::collisionFreeMotionPenalty(
+      safe, 0.0, 0.0,
+      0.00005), std::invalid_argument);
+  EXPECT_THROW(
+    ugvcar_navigation2::collisionFreeMotionPenalty(
+      safe, 0.0, 0.05,
+      1.0), std::invalid_argument);
+}
+
+TEST(PredictiveCollisionModel, InitialSoftOverlapPrefersEscapeOverWaitingAndDeepening)
+{
+  const std::vector<MovingCircle2D> obstacles{{0.0, 1.0, 0.0, 0.0, 0.35}};
+  const auto escape = ugvcar_navigation2::evaluatePredictiveCollision(
+    {{0.0, 0.0, 0.0}, {0.0, -2.0, 3.0}}, obstacles, 0.6, 0.3, 3.0);
+  const auto stopped = ugvcar_navigation2::evaluatePredictiveCollision(
+    {{0.0, 0.0, 0.0}, {0.0, 0.0, 3.0}}, obstacles, 0.6, 0.3, 3.0);
+  const auto deeper = ugvcar_navigation2::evaluatePredictiveCollision(
+    {{0.0, 0.0, 0.0}, {0.0, 0.75, 3.0}}, obstacles, 0.6, 0.3, 3.0);
+  EXPECT_DOUBLE_EQ(escape.earliest_collision_time, 0.0);
+  EXPECT_DOUBLE_EQ(deeper.earliest_collision_time, 0.0);
+  EXPECT_LT(escape.collision_exposure, stopped.collision_exposure);
+  EXPECT_LT(stopped.collision_exposure, deeper.collision_exposure);
+  EXPECT_LT(
+    ugvcar_navigation2::predictiveTrajectoryScore(escape, 3.0, 0.45, 0.0001),
+    ugvcar_navigation2::predictiveTrajectoryScore(stopped, 3.0, 0.45, 0.0001));
+  EXPECT_LT(
+    ugvcar_navigation2::predictiveTrajectoryScore(stopped, 3.0, 0.45, 0.0001),
+    ugvcar_navigation2::predictiveTrajectoryScore(deeper, 3.0, 0.45, 0.0001));
+  EXPECT_LT(deeper.minimum_clearance, stopped.minimum_clearance);
 }

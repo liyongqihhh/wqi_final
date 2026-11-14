@@ -38,6 +38,8 @@ private:
     double angular_velocity{0.0};
     double collision_time{std::numeric_limits<double>::infinity()};
     double minimum_clearance{std::numeric_limits<double>::infinity()};
+    double goal_progress_speed{0.0};
+    double collision_exposure{0.0};
   };
 
   void tracksCallback(
@@ -52,6 +54,7 @@ private:
   std::vector<MovingCircle2D> prepared_obstacles_;
   std::vector<CandidateEvaluation> evaluations_;
   geometry_msgs::msg::Pose2D current_pose_;
+  geometry_msgs::msg::Pose2D current_goal_;
   rclcpp::Subscription<
     ugvcar_navigation2_interfaces::msg::DynamicObstacleArray>::SharedPtr
     tracks_subscription_;
@@ -63,6 +66,10 @@ private:
   double prediction_horizon_{3.0};
   double preferred_clearance_{0.8};
   double clearance_weight_{0.0001};
+  double motion_preference_weight_{0.0};
+  double motion_preference_distance_{4.0};
+  double motion_preference_min_speed_{0.05};
+  bool motion_preference_active_{false};
 };
 
 }  // namespace ugvcar_navigation2

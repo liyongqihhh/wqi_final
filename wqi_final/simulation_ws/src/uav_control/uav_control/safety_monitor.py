@@ -15,6 +15,7 @@ from sensor_msgs.msg import LaserScan, PointCloud2, Range
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Bool, Float32, String
 from visualization_msgs.msg import Marker
+from uav_control.local_cloud_guard import filtered_cloud
 
 from uav_control.safety_geometry import (
     StableObstacleVectorFilter,
@@ -39,12 +40,16 @@ class SafetyMonitor(Node):
 
     def __init__(self) -> None:
         super().__init__("safety_monitor")
+        self.declare_parameter("publish_obstacle_cloud",False)
+        self.publish_obstacle_cloud=bool(self.get_parameter("publish_obstacle_cloud").value)
+        if self.publish_obstacle_cloud:
+            self.obstacle_cloud_pub=self.create_publisher(PointCloud2,"safety/obstacles",qos_profile_sensor_data)
         self.declare_parameter("safety_radius", 1.8)
         self.declare_parameter("safety_center_height", 0.18)
         self.declare_parameter("self_filter_radius", 0.58)
         self.declare_parameter("lidar_height", 0.45)
         self.declare_parameter("platform_protected_min_height", 1.2)
-        self.declare_parameter("down_sensor_height", 0.09)
+        self.declare_parameter("down_sensor_height", -0.06)
         self.declare_parameter("diagonal_sensor_height", 0.11)
         self.declare_parameter("diagonal_downward_angle", 0.78539816339)
         self.declare_parameter("diagonal_ground_tolerance", 0.08)
@@ -179,6 +184,9 @@ class SafetyMonitor(Node):
             f"UAV safety monitor is ready (radius={self.safety_radius:.2f} m)"
         )
 
+    def sensor_now(self):
+        return self.get_clock().now().nanoseconds/1e9 if self.publish_obstacle_cloud else time.monotonic()
+
     def _range_callback(self, sensor: str, message: LaserScan) -> None:
         value = minimum_valid_scan_range(
             message.ranges,
@@ -187,7 +195,7 @@ class SafetyMonitor(Node):
         )
         with self.lock:
             self.range_values[sensor] = value
-            self.range_updated_at[sensor] = time.monotonic()
+            self.range_updated_at[sensor] = self.sensor_now()
         public_message = Range()
         public_message.header = message.header
         public_message.radiation_type = Range.INFRARED
@@ -230,13 +238,19 @@ class SafetyMonitor(Node):
                 self.obstacle_patch_depth,
                 self.obstacle_patch_radius,
             )
+            if self.publish_obstacle_cloud:
+                from std_msgs.msg import Header
+                header=Header(stamp=message.header.stamp,frame_id="uav/base_link")
+                cloud=filtered_cloud(points,self.lidar_height,self.center_height,ground_clearance,
+                    self.lidar_to_down_sensor,self.ground_tolerance,self.self_filter_radius)
+                self.obstacle_cloud_pub.publish(point_cloud2.create_cloud_xyz32(header,cloud))
         except (AssertionError, KeyError, TypeError, ValueError) as error:
             self.get_logger().error(f"Cannot read UAV lidar point cloud: {error}")
             return
         with self.lock:
             self.lidar_min_distance = minimum
             self.lidar_platform_min_distance = platform_minimum
-            self.lidar_updated_at = time.monotonic()
+            self.lidar_updated_at = self.sensor_now()
             if nearest is None:
                 self.obstacle_vector_filter.reset()
                 stable_nearest = None
@@ -289,7 +303,7 @@ class SafetyMonitor(Node):
         self.marker_pub.publish(marker)
 
     def _publish_safety_state(self) -> None:
-        now = time.monotonic()
+        now = self.sensor_now()
         (
             lidar_time,
             lidar_minimum,

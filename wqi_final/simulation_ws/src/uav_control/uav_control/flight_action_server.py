@@ -9,6 +9,9 @@ from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import PointCloud2
+from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Bool, Int8, Int32, String
 from std_srvs.srv import Trigger
 from uav_interfaces.action import FlyToPose
@@ -17,7 +20,9 @@ from uav_control.dynamic_path_planner import (
     ObstacleClosingSpeed,
     path_lookahead_point,
     plan_dynamic_path,
+    vector_in_map_frame,
 )
+from uav_control.local_cloud_guard import LocalCloudGuard
 from uav_control.position_setpoint import (
     adaptive_position_setpoint,
     vertical_position_setpoint,
@@ -47,6 +52,15 @@ class FlightActionServer(Node):
         self.declare_parameter("safety_monitor_enabled", True)
         self.declare_parameter("safety_data_timeout", 1.5)
         self.declare_parameter("dynamic_replanning_enabled", True)
+        self.declare_parameter("validate_dynamic_paths",False)
+        self.validate_dynamic_paths=bool(self.get_parameter("validate_dynamic_paths").value)
+        self.declare_parameter("sensor_path_clearance",3.0)
+        self.declare_parameter("sensor_path_warning_distance",12.0)
+        self.sensor_path_clearance=float(self.get_parameter("sensor_path_clearance").value)
+        sensor_warning=float(self.get_parameter("sensor_path_warning_distance").value)
+        if (not math.isfinite(self.sensor_path_clearance) or self.sensor_path_clearance<1.8
+                or not math.isfinite(sensor_warning) or sensor_warning<self.sensor_path_clearance):
+            raise ValueError("Sensor path clearance must cover the 1.8 m sphere; warning range must cover clearance")
         self.declare_parameter("dynamic_replan_period", 0.5)
         self.declare_parameter("dynamic_path_clearance", 2.5)
         self.declare_parameter("vertical_path_clearance", 2.2)
@@ -110,6 +124,8 @@ class FlightActionServer(Node):
                 "dynamic_obstacle_warning_distance"
             ).value
         )
+        if self.validate_dynamic_paths:
+            self.dynamic_warning_distance=max(self.dynamic_warning_distance,sensor_warning)
         self.dynamic_rear_warning_distance = float(
             self.get_parameter("dynamic_rear_warning_distance").value
         )
@@ -152,6 +168,15 @@ class FlightActionServer(Node):
         self.platform_safety_updated_at = None
         self.nearest_obstacle_vector = None
         self.nearest_obstacle_updated_at = None
+        self.cloud_guard=None
+        self.pending_cloud=None
+        if self.validate_dynamic_paths:
+            from tf2_ros import Buffer,TransformListener
+            self.cloud_tf=Buffer(node=self)
+            self.cloud_tf_listener=TransformListener(self.cloud_tf,self)
+            self.create_subscription(PointCloud2,"safety/obstacles",self._cloud_callback,
+                qos_profile_sensor_data,callback_group=self.callback_group)
+            self.create_timer(.05,self._sync_cloud,callback_group=self.callback_group)
 
         self.cmd_pub = None  # Initialized by the PX4 position-setpoint adapter.
         transient_qos = QoSProfile(
@@ -241,6 +266,35 @@ class FlightActionServer(Node):
         )
         self.get_logger().info("UAV flight controller is ready")
 
+    def sensor_now(self):
+        return self.get_clock().now().nanoseconds/1e9 if self.validate_dynamic_paths else time.monotonic()
+
+    def _cloud_callback(self,message):
+        if message.header.frame_id!="uav/base_link":
+            return
+        with self.lock:
+            self.pending_cloud=(message,time.monotonic())
+
+    def _sync_cloud(self):
+        from rclpy.time import Time
+        from tf2_ros import TransformException
+        with self.lock:
+            pending=self.pending_cloud
+        if pending is None:return
+        message,received=pending
+        try:
+            tf=self.cloud_tf.lookup_transform("map",message.header.frame_id,Time.from_msg(message.header.stamp)).transform
+            q,t=tf.rotation,tf.translation
+            points=tuple(point_cloud2.read_points(message,field_names=("x","y","z"),skip_nans=True))
+            stamp=message.header.stamp.sec*1_000_000_000+message.header.stamp.nanosec
+            guard=LocalCloudGuard(points,(t.x,t.y,t.z),(q.x,q.y,q.z,q.w),stamp,received)
+        except (TransformException,ValueError,TypeError):
+            return
+        with self.lock:
+            if self.cloud_guard is None or stamp>=self.cloud_guard.stamp_ns:
+                self.cloud_guard=guard
+            if self.pending_cloud is pending:self.pending_cloud=None
+
     def _odom_callback(self, message: Odometry) -> None:
         with self.lock:
             self.current_odom = message
@@ -252,7 +306,7 @@ class FlightActionServer(Node):
     def _safety_callback(self, message: Bool) -> None:
         with self.lock:
             self.safety_blocked = bool(message.data)
-            self.safety_updated_at = time.monotonic()
+            self.safety_updated_at = self.sensor_now()
 
     def _safety_status_callback(self, message: String) -> None:
         with self.lock:
@@ -261,7 +315,7 @@ class FlightActionServer(Node):
     def _platform_safety_callback(self, message: Bool) -> None:
         with self.lock:
             self.platform_safety_blocked = bool(message.data)
-            self.platform_safety_updated_at = time.monotonic()
+            self.platform_safety_updated_at = self.sensor_now()
 
     def _platform_safety_status_callback(self, message: String) -> None:
         with self.lock:
@@ -284,7 +338,7 @@ class FlightActionServer(Node):
                 float(message.vector.y),
                 float(message.vector.z),
             )
-            self.nearest_obstacle_updated_at = time.monotonic()
+            self.nearest_obstacle_updated_at = self.sensor_now()
 
     def _snapshot(self):
         with self.lock:
@@ -460,7 +514,7 @@ class FlightActionServer(Node):
         ))
         self.dynamic_status_pub.publish(String(data="CLEAR:new_goal_direct_path"))
 
-        while rclpy.ok():
+        while rclpy.ok() and not getattr(self, "shutdown_requested", False):
             if goal_handle.is_cancel_requested:
                 goal_handle.canceled()
                 result.success = False
@@ -492,7 +546,7 @@ class FlightActionServer(Node):
                 )
                 if (
                     safety_updated_at is None
-                    or now - safety_updated_at > self.safety_data_timeout
+                    or self.sensor_now() - safety_updated_at > self.safety_data_timeout
                 ):
                     active_safety_issue = "Safety monitor data unavailable"
                 else:
@@ -504,7 +558,7 @@ class FlightActionServer(Node):
             vector_is_fresh = (
                 obstacle_vector is not None
                 and vector_updated_at is not None
-                and now - vector_updated_at
+                and self.sensor_now() - vector_updated_at
                 <= self.obstacle_vector_timeout
             )
             position = odom.pose.pose.position
@@ -519,6 +573,22 @@ class FlightActionServer(Node):
                 float(target.y),
                 float(target.z),
             )
+            guard=None
+            if self.validate_dynamic_paths and not allow_platform_proximity:
+                with self.lock:
+                    guard=self.cloud_guard
+                if guard is None or not guard.fresh(self.get_clock().now().nanoseconds,now):
+                    avoidance_active=False
+                    active_dynamic_path=()
+                    active_safety_issue="3D_SENSOR_CLOUD_UNAVAILABLE"
+                    vector_is_fresh=False
+                else:
+                    conflict=guard.first_conflict(current_position,target_position,self.sensor_path_clearance)
+                    if conflict is not None:
+                        delta=tuple(a-b for a,b in zip(conflict,current_position))
+                        obstacle_vector=vector_in_map_frame(delta,(-orientation.x,-orientation.y,-orientation.z,orientation.w))
+                        vector_is_fresh=True
+                        vector_updated_at=self.sensor_now()
             if (
                 self.dynamic_replanning_enabled
                 and not allow_platform_proximity
@@ -526,29 +596,19 @@ class FlightActionServer(Node):
                 and now - last_dynamic_replan >= self.dynamic_replan_period
             ):
                 try:
-                    dynamic_plan = plan_dynamic_path(
-                        current_position,
-                        target_position,
-                        (
-                            orientation.x,
-                            orientation.y,
-                            orientation.z,
-                            orientation.w,
-                        ),
-                        obstacle_vector,
-                        path_clearance,
-                        self.dynamic_warning_distance,
-                        self.dynamic_rear_warning_distance,
-                        self.dynamic_target_clearance,
-                        self.minimum_altitude,
-                        self.maximum_altitude,
-                        self.dynamic_path_spacing,
-                        preferred_side,
-                        rear_closing_speed=closing_speed_tracker.update(
-                            obstacle_vector, vector_updated_at
-                        ),
-                    )
+                    if guard is not None:
+                        dynamic_plan=guard.plan(current_position,target_position,self.sensor_path_clearance,
+                            self.minimum_altitude,self.maximum_altitude,preferred_side,
+                            active_dynamic_path if avoidance_active else ())
+                    else:
+                        dynamic_plan = plan_dynamic_path(current_position,target_position,
+                            (orientation.x,orientation.y,orientation.z,orientation.w),obstacle_vector,
+                            path_clearance,self.dynamic_warning_distance,self.dynamic_rear_warning_distance,
+                            self.dynamic_target_clearance,self.minimum_altitude,self.maximum_altitude,
+                            self.dynamic_path_spacing,preferred_side,
+                            rear_closing_speed=closing_speed_tracker.update(obstacle_vector,vector_updated_at))
                 except ValueError as error:
+                    last_dynamic_replan=now
                     self.get_logger().error(
                         f"Cannot calculate sensor-driven UAV path: {error}"
                     )
@@ -626,6 +686,14 @@ class FlightActionServer(Node):
                     and active_safety_issue.startswith("BLOCKED:")
                 )
             )
+            if guard is not None:
+                remaining=(current_position,target_position)
+                if avoidance_active and active_dynamic_path:
+                    nearest=min(range(len(active_dynamic_path)),key=lambda i:math.dist(current_position,active_dynamic_path[i]))
+                    remaining=(current_position,*active_dynamic_path[nearest:])
+                if not guard.path_clear(remaining,self.sensor_path_clearance):
+                    cannot_plan_safely=True
+                    active_safety_issue="3D_NO_COLLISION_FREE_LOCAL_PATH"
             if cannot_plan_safely:
                 hold = Twist()
                 hold.linear.x, hold.linear.y, hold.linear.z = current_position
@@ -663,6 +731,10 @@ class FlightActionServer(Node):
                 )
                 phase = "FOLLOWING_REPLANNED_PATH"
                 within_tolerance_since = None
+                if guard is not None and not guard.path_clear((current_position,navigation_target),self.sensor_path_clearance):
+                    navigation_target=path_lookahead_point(current_position,active_dynamic_path,.4)
+                    if not guard.path_clear((current_position,navigation_target),self.sensor_path_clearance):
+                        navigation_target=current_position
             setpoint, approaching = adaptive_position_setpoint(
                 current_position,
                 navigation_target,
@@ -698,6 +770,7 @@ class FlightActionServer(Node):
                 if within_tolerance_since is None:
                     within_tolerance_since = now
                 elif now - within_tolerance_since >= self.settle_duration:
+                    self.dynamic_status_pub.publish(String(data="COMPLETED:target_reached"))
                     goal_handle.succeed()
                     result.success = True
                     result.message = "Target reached"

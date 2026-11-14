@@ -24,6 +24,10 @@ def test_native_vehicle_has_one_namespace_and_physical_deck(namespace):
     assert robot.get("name")==namespace
     assert all(l.get("name").startswith(namespace+"/") for l in robot.findall("link"))
     assert robot.find(f"link[@name='{namespace}/base_link']/collision[@name='px4_carrier_deck_collision']") is not None
+    camera=robot.find(f"link[@name='{namespace}/camera_link']")
+    assert camera.find("visual") is None and camera.find("collision") is None
+    imu=robot.find(f"joint[@name='{namespace}/imu_joint']/origin")
+    assert [float(v) for v in imu.get("xyz").split()]==[0.,0.,-.03]
     assert robot.find("ros2_control") is None
     for plugin in robot.findall(".//plugin[@filename]"):
         assert plugin.findtext("ros/namespace")=="/"+namespace
@@ -219,6 +223,9 @@ def test_four_car_launch_defaults_to_validated_middleware_components_and_both_wi
     assert defaults["use_composition"]=="true"
     assert defaults["gui"]==defaults["rviz"]=="true"
     assert defaults["rviz_render_driver"]=="softpipe"
+    assert defaults["vehicle"]=="all"
+    assert defaults["start_mission_manager"]=="true"
+    assert defaults["rviz_config"]==""
     source=path.read_text()
     assert 'executable="regional_nav_container"' in source
     assert 'executable="component_container_isolated"' not in source
@@ -252,3 +259,66 @@ def test_gazebo_crash_stops_scene_but_normal_exit_does_not_repeat_shutdown():
     assert module.gazebo_exited(event,SimpleNamespace(is_shutdown=True))==[]
     event.action.process_details["name"]="gzclient-6"
     assert module.gazebo_exited(event,SimpleNamespace(is_shutdown=False))==[]
+
+
+@pytest.mark.parametrize("namespace",["ugv_00","ugv_01","ugv_02","ugv_03"])
+def test_single_vehicle_selection_excludes_all_inactive_peer_layers(namespace):
+    from campus_regional_delivery.fleet import select_fleet
+    from campus_regional_delivery.layout import RegionalLayout
+    layout=RegionalLayout(Path(__file__).parents[1]/"config/campus_regions.yaml")
+    before=yaml.safe_dump(layout.data)
+    vehicles=select_fleet(layout.vehicles,namespace,with_uav=False,start_mission_manager=False)
+    assert len(vehicles)==1
+    assert next(iter(vehicles.values()))["namespace"]==namespace
+    share=Path(get_package_share_directory("ugvcar_navigation2"))
+    original=yaml.safe_load((share/"config/nav2_params.yaml").read_text())
+    params=fleet_parameters(original,share,namespace,[namespace])[namespace]
+    for name in ("local_costmap","global_costmap"):
+        plugins=params[name][name]["ros__parameters"]["plugins"]
+        assert not any(p.startswith("peer_") for p in plugins)
+    assert yaml.safe_dump(layout.data)==before
+
+
+@pytest.mark.parametrize("uav,manager",[(True,True),(True,False),(False,True)])
+def test_single_vehicle_cannot_silently_start_full_fleet_coordination(uav,manager):
+    from campus_regional_delivery.fleet import select_fleet
+    with pytest.raises(ValueError,match="Single-UGV navigation"):
+        select_fleet({"H":{"namespace":"ugv_00"}},"ugv_00",uav,manager)
+
+
+def test_default_selection_preserves_the_full_fleet_and_rejects_unknown_car():
+    from campus_regional_delivery.fleet import select_fleet
+    vehicles={str(i):{"namespace":f"ugv_0{i}"} for i in range(4)}
+    assert select_fleet(vehicles) is vehicles
+    with pytest.raises(ValueError,match="Unknown regional vehicle"):
+        select_fleet(vehicles,"ugv_09",False,False)
+
+
+@pytest.mark.parametrize("namespace",["ugv_00","ugv_01","ugv_02","ugv_03"])
+def test_manual_entry_routes_model_path_costmap_and_goal_to_one_vehicle(namespace,tmp_path):
+    import importlib.util
+    from launch import LaunchContext
+    folder=Path(__file__).parents[1]
+    path=folder/"launch/regional_ugv_navigation.launch.py"
+    spec=importlib.util.spec_from_file_location("manual_navigation_contract",path)
+    module=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    context=LaunchContext()
+    context.environment["WQI_BUILD_ROOT"]=str(tmp_path)
+    context.launch_configurations.update(vehicle=namespace,gui="false",rviz="true",
+        rmw_implementation="rmw_cyclonedds_cpp")
+    include,=module.prepare(context)
+    args=dict(include.launch_arguments)
+    assert args["vehicle"]==namespace
+    assert args["uav"]==args["start_mission_manager"]=="false"
+    assert args["rviz"]=="true" and args["delivery_mode"]=="ugv_only"
+    manager=yaml.safe_load(Path(args["rviz_config"]).read_text())["Visualization Manager"]
+    displays={d["Name"]:d for d in manager["Displays"]}
+    assert set(displays)=={"Campus Map","UGV Global Costmap","UGV","Planned Path"}
+    assert displays["UGV"]["Description Topic"]["Value"]==f"/{namespace}/robot_description"
+    assert displays["UGV"]["TF Prefix"]==""
+    assert displays["Planned Path"]["Topic"]["Value"]==f"/{namespace}/plan"
+    assert displays["UGV Global Costmap"]["Topic"]["Value"]==f"/{namespace}/global_costmap/costmap"
+    goal=next(t for t in manager["Tools"] if t["Class"]=="rviz_default_plugins/SetGoal")
+    assert goal["Topic"]["Value"]==f"/{namespace}/goal_pose"
+    assert all(t["Class"]!="rviz_default_plugins/SetInitialPose" for t in manager["Tools"])

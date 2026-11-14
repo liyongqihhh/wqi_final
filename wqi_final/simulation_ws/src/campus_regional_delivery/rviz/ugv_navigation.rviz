@@ -1,0 +1,103 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Map
+      Name: Campus Map
+      Enabled: true
+      Value: true
+      Alpha: 1
+      Color Scheme: map
+      Draw Behind: true
+      Topic:
+        Value: /map
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Use Timestamp: false
+    - Class: rviz_default_plugins/Map
+      Name: UGV Global Costmap
+      Enabled: true
+      Value: true
+      Alpha: 0.65
+      Color Scheme: costmap
+      Draw Behind: false
+      Topic:
+        Value: /ugv_00/global_costmap/costmap
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Update Topic:
+        Value: /ugv_00/global_costmap/costmap_updates
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      Use Timestamp: false
+    - Class: rviz_default_plugins/RobotModel
+      Name: UGV
+      Enabled: true
+      Value: true
+      Alpha: 1
+      Collision Enabled: false
+      Visual Enabled: true
+      Description Source: Topic
+      Description Topic:
+        Value: /ugv_00/robot_description
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+      TF Prefix: ""
+      Links:
+        All Links Enabled: true
+    - Class: rviz_default_plugins/Path
+      Name: Planned Path
+      Enabled: true
+      Value: true
+      Color: 255; 210; 0
+      Alpha: 1
+      Line Style: Lines
+      Line Width: 0.08
+      Buffer Length: 1
+      Topic:
+        Value: /ugv_00/plan
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+  Enabled: true
+  Global Options:
+    Background Color: 255; 255; 255
+    Fixed Frame: map
+    Frame Rate: 10
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /ugv_00/goal_pose
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Angle: 0
+      Scale: 3.5
+      X: 0
+      Y: 0
+      Near Clip Distance: 0.01
+      Target Frame: <Fixed Frame>
+    Saved: ~
+Window Geometry:
+  Width: 1200
+  Height: 800

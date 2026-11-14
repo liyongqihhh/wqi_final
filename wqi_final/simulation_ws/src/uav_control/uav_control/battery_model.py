@@ -771,6 +771,7 @@ class BatteryModel:
         horizontal_acceleration_velocity_dot_m2ps3: float | None = None,
         payload_mass_kg: float = 0.0,
         charge_target_soc: float = 1.0,
+        charging_input_power_w: float | None = None,
     ) -> BatterySnapshot:
         if not math.isfinite(dt_seconds) or dt_seconds < 0.0:
             raise ValueError("dt_seconds must be finite and non-negative")
@@ -779,7 +780,30 @@ class BatteryModel:
         self.last_total_mass_kg = self.total_mass_kg(payload)
         if not math.isfinite(charge_target_soc) or not 0 <= charge_target_soc <= 1:
             raise ValueError("charge_target_soc must be between 0 and 1")
-        if docked and self.soc < charge_target_soc:
+        if charging_input_power_w is not None and (
+                not math.isfinite(charging_input_power_w) or charging_input_power_w < 0):
+            raise ValueError("charging_input_power_w must be finite and nonnegative")
+        if docked and charging_input_power_w is not None:
+            # A finite external pack supplies the converter, not free energy.
+            delivered = min(self.parameters.charge_power_w, charging_input_power_w)
+            net = delivered * self.parameters.charge_efficiency - self.parameters.docked_idle_power_w
+            if net >= 0:
+                accepted = min(net * dt_seconds / 3600,
+                    max(0., self.parameters.capacity_wh * charge_target_soc - self.energy_wh))
+                self.energy_wh += accepted
+                self.charged_energy_wh += accepted
+                self.last_power_w = -accepted * 3600 / dt_seconds if dt_seconds else 0.
+                self.last_mode = "CHARGING" if accepted > 0 else "FULL"
+            else:
+                consumed = min(self.energy_wh, -net * dt_seconds / (
+                    3600 * self.parameters.discharge_efficiency))
+                self.energy_wh -= consumed
+                self.consumed_energy_wh += consumed
+                self.last_power_w = consumed * 3600 / dt_seconds if dt_seconds else 0.
+                self.last_mode = "DOCKED_IDLE"
+            self.last_propulsion_power_w = 0.
+            self.last_auxiliary_power_w = self.parameters.docked_idle_power_w
+        elif docked and self.soc < charge_target_soc:
             stored_power = self.parameters.net_charge_power_w
             stored_energy = stored_power * dt_seconds / 3600.0
             available_capacity = self.parameters.capacity_wh * charge_target_soc - self.energy_wh

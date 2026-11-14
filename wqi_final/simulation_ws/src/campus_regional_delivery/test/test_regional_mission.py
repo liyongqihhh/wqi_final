@@ -13,6 +13,150 @@ from rclpy.action import GoalResponse
 LAYOUT=Path(__file__).parents[1]/"config/campus_regions.yaml"
 
 
+def recovery_manager(state=1,carrier="",fault=""):
+    point=SimpleNamespace(x=-18.,y=22.,z=10.)
+    odom=SimpleNamespace(pose=SimpleNamespace(pose=SimpleNamespace(position=point)))
+    manager=SimpleNamespace(uav_state=state,carrier=carrier,fault=fault,recovery_namespace="ugv_01",
+        recovery_status=Mock(),set_navigation_paused=Mock(),settled=Mock(),verify_docked=Mock(),
+        phase_to=Mock(),call=Mock(),select=Mock(),land=Mock(),fly=Mock(),land_at=Mock(),
+        uav_pose=odom,uav_received=time.monotonic(),poses={"ugv_01":odom},
+        received={"ugv_01":time.monotonic()},layout=RegionalLayout(LAYOUT))
+    manager.wait=Mock()
+    return manager
+
+
+def test_cancel_recovery_returns_to_assigned_stationary_receiver_without_retaking_off():
+    manager=recovery_manager()
+    RegionalMissionManager.recover_uav(manager)
+    manager.set_navigation_paused.assert_called_once_with(True,None)
+    manager.settled.assert_called_once_with("ugv_01",None)
+    assert manager.fly.call_count==2
+    assert manager.fly.call_args_list[0].args==((-18.,22.,15.),None,True)
+    manager.land_at.assert_called_once_with((-18.,22.),None,"ugv_01")
+    assert manager.recovery_status.call_args.args==("DOCKED",)
+
+
+@pytest.mark.parametrize("state,fault",[(3,""),(1,"POSITION_ESTIMATE_LOST")])
+def test_recovery_does_not_override_native_emergency_landing(state,fault):
+    manager=recovery_manager(state=state,fault=fault)
+    RegionalMissionManager.recover_uav(manager)
+    manager.fly.assert_not_called()
+    manager.land_at.assert_not_called()
+    assert manager.recovery_status.call_args.args[0]=="LANDED_UNDOCKED"
+
+
+def test_failed_receiver_recovery_requests_landing_and_never_reports_docking():
+    manager=recovery_manager()
+    manager.fly.side_effect=RuntimeError("Receiver route blocked")
+    RegionalMissionManager.recover_uav(manager)
+    manager.call.assert_any_call(manager.land,None)
+    manager.land_at.assert_not_called()
+    assert manager.recovery_status.call_args.args[0]=="LANDED_UNDOCKED"
+
+
+def test_initial_locked_takeoff_cancellation_lands_before_verifying_capture():
+    manager=recovery_manager(state=2,carrier="ugv_01")
+    def wait(*_):manager.uav_state=0
+    manager.wait=wait
+    RegionalMissionManager.recover_uav(manager)
+    manager.call.assert_called_once_with(manager.land,None)
+    manager.verify_docked.assert_called_once_with("ugv_01",None)
+    manager.fly.assert_not_called()
+
+
+def test_already_landed_but_unlocked_recovery_never_fakes_attachment():
+    manager=recovery_manager(state=0)
+    RegionalMissionManager.recover_uav(manager)
+    manager.verify_docked.assert_not_called()
+    manager.land_at.assert_not_called()
+    assert manager.recovery_status.call_args.args[0]=="LANDED_UNDOCKED"
+
+
+def test_unknown_startup_state_is_not_recovered_by_blind_flight():
+    manager=recovery_manager(state=None)
+    RegionalMissionManager.recover_uav(manager)
+    manager.fly.assert_not_called()
+    manager.set_navigation_paused.assert_not_called()
+    assert manager.recovery_status.call_args.args[0]=="NO_FLIGHT_OBSERVED"
+
+
+def test_motion_goals_are_cancelled_and_completed_before_recovery():
+    order=[]
+    nav=Mock();fly=Mock()
+    manager=SimpleNamespace(nav_goal=nav,fly_goal=fly,stop_pubs={"ugv_01":Mock()},get_logger=Mock())
+    manager.future=lambda future,*_:order.append(future)
+    RegionalMissionManager.stop_active_motion(manager)
+    assert order==[nav.cancel_goal_async.return_value,nav.get_result_async.return_value,
+                   fly.cancel_goal_async.return_value,fly.get_result_async.return_value]
+    assert manager.nav_goal is None and manager.fly_goal is None
+    manager.stop_pubs["ugv_01"].publish.assert_called_once()
+
+
+@pytest.mark.parametrize("state",[1,2,3])
+def test_new_cooperative_goal_is_rejected_while_previous_uav_is_airborne(state):
+    import threading
+    manager=SimpleNamespace(batches=Mock(),busy=False,busy_lock=threading.Lock(),
+        delivery_mode="cooperative",uav_state=state,report_admission=Mock())
+    assert RegionalMissionManager.goal(manager,Mock())==GoalResponse.REJECT
+    assert not manager.busy
+
+
+def test_wait_exits_when_the_executor_is_shutting_down(monkeypatch):
+    import campus_regional_delivery.mission_manager as module
+    monkeypatch.setattr(module.rclpy,"ok",lambda:True)
+    manager=SimpleNamespace(shutdown_requested=True,phase="PREPARING",waiting_on="READY")
+    with pytest.raises(InterruptedError,match="shutting down"):
+        RegionalMissionManager.wait(manager,lambda:False,None,10.)
+
+
+def test_recovery_phase_can_be_published_after_client_cancellation():
+    manager=SimpleNamespace(delivery_mode="cooperative",status_pub=Mock(),landing_pub=Mock(),
+        flight_phase_pub=Mock(),carrier="",get_logger=Mock())
+    RegionalMissionManager.phase_to(manager,"RECOVERY_RETURNING",None,"ugv_01","UAV")
+    assert manager.status_pub.publish.call_args.args[0].data=="RECOVERY_RETURNING:ugv_01:UAV"
+
+
+@pytest.mark.parametrize("cancelled",[False,True])
+def test_failed_or_cancelled_mission_recovers_before_terminal_result(cancelled):
+    import threading
+    manager=Mock(spec=RegionalMissionManager)
+    manager.delivery_mode="cooperative";manager.shutdown_requested=False
+    manager.busy=True;manager.busy_lock=threading.Lock()
+    manager.uav_state=1;manager.carrier="";manager.paused_navigation=set()
+    manager.batches.return_value=[]
+    manager.ready.side_effect=InterruptedError("Cancelled") if cancelled else RuntimeError("Flight failed")
+    goal=Mock(is_cancel_requested=cancelled)
+    result=RegionalMissionManager.execute(manager,goal)
+    assert not result.success
+    names=[c[0] for c in manager.mock_calls]
+    assert names.index("stop_active_motion")<names.index("recover_uav")
+    manager.recover_uav.assert_called_once()
+    assert not manager.busy
+    (goal.canceled if cancelled else goal.abort).assert_called_once()
+    goal.succeed.assert_not_called()
+
+
+@pytest.mark.parametrize("verified",[False,True])
+def test_navigation_resumes_only_after_a_verified_recovery_not_a_stale_carrier_flag(verified):
+    import threading
+    manager=Mock(spec=RegionalMissionManager)
+    manager.delivery_mode="cooperative";manager.shutdown_requested=False
+    manager.busy=True;manager.busy_lock=threading.Lock()
+    manager.uav_state=0;manager.carrier="ugv_00";manager.paused_navigation={"ugv_00"}
+    manager.recovery_verified=verified
+    manager.batches.return_value=[]
+    manager.ready.side_effect=RuntimeError("Flight failed")
+    if not verified:
+        manager.recover_uav.side_effect=RuntimeError("Measured docking failed")
+    goal=Mock(is_cancel_requested=False)
+    result=RegionalMissionManager.execute(manager,goal)
+    assert not result.success
+    if verified:
+        manager.set_navigation_paused.assert_called_once_with(False,None)
+    else:
+        manager.set_navigation_paused.assert_not_called()
+
+
 @pytest.mark.parametrize("reason",["Unknown target or invalid/excessive parcel mass",
     "Requested floor exceeds the existing building height"])
 def test_invalid_goal_explains_its_rejection_without_reserving_the_server(reason):

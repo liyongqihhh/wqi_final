@@ -49,7 +49,7 @@
     self_filter_radius: 0.58
     lidar_height: 0.45
     platform_protected_min_height: 1.2
-    down_sensor_height: 0.09
+    down_sensor_height: -0.06
     diagonal_sensor_height: 0.11
     diagonal_downward_angle: 0.78539816339
     diagonal_ground_tolerance: 0.08

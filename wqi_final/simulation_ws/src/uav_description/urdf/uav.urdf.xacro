@@ -4,6 +4,7 @@
   <xacro:arg name="enable_docking" default="false"/>
   <xacro:arg name="visualize_sensor_rays" default="false"/>
   <xacro:property name="model" value="${xacro.load_yaml('$(arg params_path)')}"/>
+  <xacro:property name="simple" value="${model['visual']}"/>
 
   <material name="uav_orange"><color rgba="0.95 0.35 0.05 1"/></material>
   <material name="uav_dark"><color rgba="0.08 0.09 0.11 1"/></material>
@@ -11,12 +12,7 @@
   <material name="sensor_blue"><color rgba="0.05 0.35 0.80 1"/></material>
 
   <xacro:macro name="uav_range_sensor" params="name topic xyz rpy max_range">
-    <link name="${name}_link">
-      <visual>
-        <geometry><sphere radius="0.015"/></geometry>
-        <material name="sensor_blue"/>
-      </visual>
-    </link>
+    <link name="${name}_link"/>
     <joint name="${name}_joint" type="fixed">
       <parent link="base_link"/>
       <child link="${name}_link"/>
@@ -57,6 +53,39 @@
         </plugin>
       </sensor>
     </gazebo>
+  </xacro:macro>
+
+  <xacro:macro name="simple_arm_visual" params="index">
+    <xacro:property name="rotor" value="${simple['rotor_positions'][index]}"/>
+    <visual name="simple_arm_${index}">
+      <origin xyz="${rotor[0]/2} ${rotor[1]/2} ${rotor[2]}" rpy="0 ${pi/2} ${atan2(rotor[1], rotor[0])}"/>
+      <geometry><cylinder radius="${simple['arm_radius']}" length="${sqrt(rotor[0]**2+rotor[1]**2)}"/></geometry>
+      <material name="uav_silver"/>
+    </visual>
+    <visual name="simple_rotor_${index}">
+      <origin xyz="${rotor[0]} ${rotor[1]} ${rotor[2]}"/>
+      <geometry><cylinder radius="${simple['rotor_radius']}" length="${simple['rotor_thickness']}"/></geometry>
+      <material name="uav_dark"/>
+    </visual>
+  </xacro:macro>
+
+  <xacro:macro name="simple_skid_visual" params="side sign">
+    <xacro:property name="y" value="${sign*simple['skid_y']}"/>
+    <visual name="simple_skid_${side}">
+      <origin xyz="0 ${y} ${simple['skid_z']}" rpy="0 ${pi/2} 0"/>
+      <geometry><cylinder radius="${simple['skid_radius']}" length="${simple['skid_length']}"/></geometry>
+      <material name="uav_dark"/>
+    </visual>
+    <visual name="simple_leg_${side}_front">
+      <origin xyz="${simple['leg_x']} ${y} ${simple['leg_z']}"/>
+      <geometry><cylinder radius="${simple['leg_radius']}" length="${simple['leg_length']}"/></geometry>
+      <material name="uav_silver"/>
+    </visual>
+    <visual name="simple_leg_${side}_rear">
+      <origin xyz="${-simple['leg_x']} ${y} ${simple['leg_z']}"/>
+      <geometry><cylinder radius="${simple['leg_radius']}" length="${simple['leg_length']}"/></geometry>
+      <material name="uav_silver"/>
+    </visual>
   </xacro:macro>
 
   <link name="base_footprint"/>
@@ -111,32 +140,17 @@
       <origin xyz="0 0 0.33" rpy="0 0 0"/>
       <geometry><cylinder radius="0.015" length="0.24"/></geometry>
     </collision>
-    <visual>
-      <origin xyz="0 0 0.15" rpy="0 0 0"/>
-      <geometry><box size="0.32 0.20 0.10"/></geometry>
+    <visual name="simple_body">
+      <origin xyz="0 0 ${simple['body_z']}"/>
+      <geometry><box size="${simple['body_size'][0]} ${simple['body_size'][1]} ${simple['body_size'][2]}"/></geometry>
       <material name="uav_orange"/>
     </visual>
-    <visual>
-      <origin xyz="0 0 0.17" rpy="0 0 0.785398"/>
-      <geometry><box size="0.78 0.045 0.025"/></geometry>
-      <material name="uav_silver"/>
-    </visual>
-    <visual>
-      <origin xyz="0 0 0.17" rpy="0 0 -0.785398"/>
-      <geometry><box size="0.78 0.045 0.025"/></geometry>
-      <material name="uav_silver"/>
-    </visual>
-    <visual><origin xyz="0.275 0.275 0.19"/><geometry><cylinder radius="0.12" length="0.018"/></geometry><material name="uav_dark"/></visual>
-    <visual><origin xyz="0.275 -0.275 0.19"/><geometry><cylinder radius="0.12" length="0.018"/></geometry><material name="uav_dark"/></visual>
-    <visual><origin xyz="-0.275 0.275 0.19"/><geometry><cylinder radius="0.12" length="0.018"/></geometry><material name="uav_dark"/></visual>
-    <visual><origin xyz="-0.275 -0.275 0.19"/><geometry><cylinder radius="0.12" length="0.018"/></geometry><material name="uav_dark"/></visual>
-    <visual><origin xyz="0 0.18 0.025"/><geometry><box size="0.46 0.04 0.05"/></geometry><material name="uav_dark"/></visual>
-    <visual><origin xyz="0 -0.18 0.025"/><geometry><box size="0.46 0.04 0.05"/></geometry><material name="uav_dark"/></visual>
-    <visual><origin xyz="0.15 0.18 0.075"/><geometry><box size="0.03 0.03 0.10"/></geometry><material name="uav_silver"/></visual>
-    <visual><origin xyz="-0.15 0.18 0.075"/><geometry><box size="0.03 0.03 0.10"/></geometry><material name="uav_silver"/></visual>
-    <visual><origin xyz="0.15 -0.18 0.075"/><geometry><box size="0.03 0.03 0.10"/></geometry><material name="uav_silver"/></visual>
-    <visual><origin xyz="-0.15 -0.18 0.075"/><geometry><box size="0.03 0.03 0.10"/></geometry><material name="uav_silver"/></visual>
-    <visual><origin xyz="0 0 0.33"/><geometry><cylinder radius="0.012" length="0.24"/></geometry><material name="uav_silver"/></visual>
+    <xacro:simple_arm_visual index="${0}"/>
+    <xacro:simple_arm_visual index="${1}"/>
+    <xacro:simple_arm_visual index="${2}"/>
+    <xacro:simple_arm_visual index="${3}"/>
+    <xacro:simple_skid_visual side="left" sign="${1}"/>
+    <xacro:simple_skid_visual side="right" sign="${-1}"/>
   </link>
 
   <link name="imu_link"/>
@@ -146,28 +160,18 @@
     <origin xyz="0 0 0.15" rpy="0 0 0"/>
   </joint>
 
-  <link name="top_3d_lidar_link">
-    <visual>
-      <geometry><cylinder radius="0.05" length="0.06"/></geometry>
-      <material name="sensor_blue"/>
-    </visual>
-  </link>
+  <link name="top_3d_lidar_link"/>
   <joint name="top_3d_lidar_joint" type="fixed">
     <parent link="base_link"/>
     <child link="top_3d_lidar_link"/>
     <origin xyz="0 0 0.45" rpy="0 0 0"/>
   </joint>
 
-  <link name="down_camera_link">
-    <visual>
-      <geometry><box size="0.05 0.07 0.04"/></geometry>
-      <material name="sensor_blue"/>
-    </visual>
-  </link>
+  <link name="down_camera_link"/>
   <joint name="down_camera_joint" type="fixed">
     <parent link="base_link"/>
     <child link="down_camera_link"/>
-    <origin xyz="0 0 0.09" rpy="0 1.57079632679 0"/>
+    <origin xyz="0 0 -0.06" rpy="0 1.57079632679 0"/>
   </joint>
 
   <link name="down_camera_optical_frame"/>
@@ -179,13 +183,13 @@
 
   <xacro:uav_range_sensor
     name="down_range" topic="down"
-    xyz="0 0 0.09" rpy="0 1.57079632679 0" max_range="30.0"/>
+    xyz="0 0 -0.06" rpy="0 1.57079632679 0" max_range="30.0"/>
   <xacro:uav_range_sensor
     name="front_down_range" topic="front_down"
-    xyz="0.18 0 0.11" rpy="0 0.78539816339 0" max_range="4.0"/>
+    xyz="0.28 0 0.11" rpy="0 0.78539816339 0" max_range="4.0"/>
   <xacro:uav_range_sensor
     name="rear_down_range" topic="rear_down"
-    xyz="-0.18 0 0.11" rpy="0 2.35619449019 0" max_range="4.0"/>
+    xyz="-0.28 0 0.11" rpy="0 2.35619449019 0" max_range="4.0"/>
   <xacro:uav_range_sensor
     name="left_down_range" topic="left_down"
     xyz="0 0.24 0.11" rpy="0 0.78539816339 1.57079632679" max_range="4.0"/>

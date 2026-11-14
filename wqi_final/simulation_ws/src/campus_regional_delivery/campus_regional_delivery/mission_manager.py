@@ -17,7 +17,6 @@ from nav_msgs.msg import Odometry, Path as NavPath
 import rclpy
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
-from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import Bool, Float32, Float64, Int8, String
@@ -27,9 +26,10 @@ from uav_interfaces.srv import SelectCarrier
 import yaml
 
 from campus_regional_delivery.layout import RegionalLayout, partition_orders
+from campus_regional_delivery.energy_mission import RegionalEnergyMixin
 
 
-class RegionalMissionManager(Node):
+class RegionalMissionManager(RegionalEnergyMixin, Node):
     def __init__(self):
         super().__init__("regional_mission_manager")
         share=Path(get_package_share_directory("campus_regional_delivery"))
@@ -57,17 +57,28 @@ class RegionalMissionManager(Node):
         self.active_vehicle=""
         self.nav_goal=None
         self.fly_goal=None
+        self.shutdown_requested=False
+        self.recovery_namespace=self.layout.hub["namespace"]
+        self.recovery_verified=False
         self.landing_goal=None
         self.landing_target=None
         self.landing_namespace=""
         self.last_landing_log=0.
         qos=QoSProfile(depth=1,durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.init_energy(qos)
+        self.declare_parameter("require_dynamic_traffic",False)
+        self.require_dynamic_traffic=bool(self.get_parameter("require_dynamic_traffic").value)
+        self.dynamic_traffic_ready=False
+        if self.require_dynamic_traffic:
+            self.create_subscription(String,"/dynamic_obstacles/manifest",self._traffic_manifest,qos,
+                                     callback_group=self.group)
         self.status_pub=self.create_publisher(String,"mission_status",qos)
         self.event_pub=self.create_publisher(String,"cargo_events",qos)
         self.admission_pub=self.create_publisher(String,"task_admission",qos)
         self.readiness_pub=self.create_publisher(String,"readiness",qos)
         self.landing_pub=self.create_publisher(String,"landing_status",qos)
         self.capture_pub=self.create_publisher(String,"capture_status",qos)
+        self.recovery_pub=self.create_publisher(String,"recovery_status",qos)
         self.readiness_pub.publish(String(data="WAITING_FOR_VEHICLES_AND_PX4"
             if self.delivery_mode=="cooperative" else "WAITING_FOR_VEHICLES"))
         self.path_pub=self.create_publisher(NavPath,"/uav/planned_path",qos)
@@ -109,6 +120,13 @@ class RegionalMissionManager(Node):
             f"mode={self.delivery_mode}; ROS_DOMAIN_ID={os.environ.get('ROS_DOMAIN_ID','0')}; "
             f"RMW_IMPLEMENTATION={os.environ.get('RMW_IMPLEMENTATION','default')}. "
             "Waiting for a delivery goal; launching the map does not submit an order.")
+
+    def _traffic_manifest(self,message):
+        try:
+            manifest=json.loads(message.data)
+            self.dynamic_traffic_ready=(manifest["requested"]==manifest["spawned"] and not manifest["failures"])
+        except (ValueError,KeyError,TypeError):
+            self.dynamic_traffic_ready=False
 
     def publish_readiness(self):
         if self.phase!="PREPARING" or self.waiting_on=="READY":
@@ -203,12 +221,21 @@ class RegionalMissionManager(Node):
     def goal(self,request):
         try:
             self.batches(request)
-        except (ValueError,KeyError,StopIteration) as error:
+            if (getattr(self,"require_dynamic_traffic",False) is True
+                    and not self.dynamic_traffic_ready):
+                raise RuntimeError("Dynamic traffic is not ready; inspect /dynamic_obstacles/manifest")
+            if getattr(self,"enable_energy",False) is True:
+                self.energy_admission(request)
+        except (ValueError,KeyError,StopIteration,RuntimeError) as error:
             self.report_admission(request,False,str(error) or "Target has no assigned region")
             return GoalResponse.REJECT
         with self.busy_lock:
             if self.busy:
                 self.report_admission(request,False,"A regional delivery mission is already active")
+                return GoalResponse.REJECT
+            if (getattr(self,"delivery_mode","cooperative")=="cooperative"
+                    and getattr(self,"uav_state",None) in (1,2,3)):
+                self.report_admission(request,False,"UAV is still airborne or landing; wait for safe recovery")
                 return GoalResponse.REJECT
             self.busy=True
         self.report_admission(request,True,"Accepted; starting regional readiness checks")
@@ -235,14 +262,20 @@ class RegionalMissionManager(Node):
         feedback=ExecuteCooperativeDelivery.Feedback()
         feedback.phase,feedback.current_target,feedback.active_vehicle=phase,target,vehicle
         feedback.uav_docked=bool(self.carrier)
-        goal.publish_feedback(feedback)
+        if goal is not None:
+            goal.publish_feedback(feedback)
         self.get_logger().info(f"Regional phase: {phase} {target} {vehicle}")
 
     def wait(self,predicate,goal,timeout=600.):
         deadline=time.monotonic()+timeout
         while rclpy.ok() and time.monotonic()<deadline:
+            if getattr(self,"shutdown_requested",False):
+                raise InterruptedError("Regional simulation is shutting down")
             if goal is not None and goal.is_cancel_requested:
                 raise InterruptedError("Regional mission canceled")
+            if (goal is not None and getattr(self,"enable_energy",False) is True
+                    and self.phase!="PREPARING"):
+                self.energy_guard()
             if predicate():
                 return
             time.sleep(.05)
@@ -332,6 +365,8 @@ class RegionalMissionManager(Node):
             self.set_navigation_paused(False,goal,namespace)
         self.wait(lambda: namespace in self.poses and time.monotonic()-self.received[namespace]<3,goal,30)
         p=self.poses[namespace].pose.pose.position
+        if getattr(self,"enable_energy",False) is True:
+            self.energy_before_drive(namespace,pose)
         if math.hypot(p.x-pose[0],p.y-pose[1])>.3:
             request=NavigateToPose.Goal()
             request.pose.header.frame_id="map"
@@ -472,6 +507,7 @@ class RegionalMissionManager(Node):
             self.landing_goal=None
 
     def air_transport(self,point,goal,namespace=None):
+        self.recovery_namespace=namespace or self.layout.hub["namespace"]
         if namespace:
             # Nav2 may finish within its tolerance rather than at the nominal
             # parking coordinate. Land on the measured stationary deck centre.
@@ -479,6 +515,8 @@ class RegionalMissionManager(Node):
             receiver=self.poses[namespace].pose.pose.position
             point=(receiver.x,receiver.y)
         self.set_navigation_paused(True,goal)
+        if getattr(self,"enable_energy",False) is True:
+            self.energy_before_flight(point,goal)
         self.phase_to("UAV_TAKEOFF",goal,namespace or "central_hub","UAV")
         self.depart(goal)
         if namespace:
@@ -500,17 +538,94 @@ class RegionalMissionManager(Node):
         self.land_at(point,goal,namespace)
 
     def floor_delivery(self,namespace,order,goal):
+        self.recovery_namespace=namespace
         self.phase_to("UAV_FLOOR_DELIVERY",goal,order["target"],"UAV")
         self.settled(namespace,goal)
         p=self.poses[namespace].pose.pose.position
         point=(p.x,p.y)
         self.set_navigation_paused(True,goal)
+        if getattr(self,"enable_energy",False) is True:
+            self.energy_before_flight(point,goal,order["floor"])
+            self.phase_to("UAV_FLOOR_DELIVERY",goal,order["target"],"UAV")
         self.depart(goal)
         height=1.6+3.2*(order["floor"]-1)
         self.fly((*point,height),goal,True)
         self.hover(goal)
+        if getattr(self,"enable_energy",False) is True:
+            self.energy_transfer("uav","delivered",order["mass"],goal)
         self.payload_pub.publish(Float32(data=0.))
         self.land_at(point,goal,namespace)
+
+    def stop_active_motion(self):
+        for name in ("nav_goal","fly_goal"):
+            handle=getattr(self,name)
+            if handle is None:
+                continue
+            try:
+                self.future(handle.cancel_goal_async(),None,10.)
+                self.future(handle.get_result_async(),None,20.)
+            except Exception as error:
+                self.get_logger().error("Could not confirm motion cancellation: "+str(error))
+            finally:
+                setattr(self,name,None)
+        for publisher in self.stop_pubs.values():
+            publisher.publish(Twist())
+
+    def recovery_status(self,status,reason=""):
+        self.recovery_verified=status=="DOCKED"
+        details={"status":status,"reason":reason,"uav_state":self.uav_state,
+            "carrier":self.carrier,"target_carrier":self.recovery_namespace}
+        self.recovery_pub.publish(String(data=json.dumps(details)))
+        self.get_logger().info("Regional recovery: "+json.dumps(details))
+
+    def recover_uav(self):
+        """Recover to the assigned parked receiver, never mark the order successful."""
+        self.recovery_status("STOPPING")
+        if self.uav_state is None:
+            self.recovery_status("NO_FLIGHT_OBSERVED")
+            return
+        self.set_navigation_paused(True,None)
+        if self.carrier and self.uav_state!=0:
+            # Cancellation may arrive after takeoff is accepted but before the
+            # platform joint is released. Never pull against that fixed joint.
+            self.call(self.land,None)
+            self.wait(lambda:self.uav_state==0,None,600.)
+        if self.uav_state==0:
+            if self.carrier:
+                self.settled(self.carrier,None)
+                self.verify_docked(self.carrier,None)
+                self.recovery_status("DOCKED")
+            else:
+                self.recovery_status("LANDED_UNDOCKED","Manual inspection required before ground transport")
+            return
+        # Do not override PX4 emergency landing with a new position goal.
+        if self.uav_state==3 or self.fault:
+            self.recovery_status("WAITING_FOR_PX4_LANDING",self.fault)
+            self.wait(lambda:self.uav_state==0,None,600.)
+            self.recovery_status("LANDED_UNDOCKED","Emergency landing is not verified docking")
+            return
+        namespace=self.recovery_namespace
+        try:
+            self.phase_to("RECOVERY_PARKING",None,namespace,"UAV")
+            self.settled(namespace,None)
+            self.wait(lambda:self.uav_pose is not None and time.monotonic()-self.uav_received<3.
+                and namespace in self.poses and time.monotonic()-self.received[namespace]<3.,None,30.)
+            self.call(self.select,None,SelectCarrier.Request(model_name=namespace,link_name=namespace+"/base_footprint"))
+            current=self.uav_pose.pose.pose.position
+            receiver=self.poses[namespace].pose.pose.position
+            altitude=float(self.layout.data["flight"]["cruise_altitude"])
+            self.phase_to("RECOVERY_RETURNING",None,namespace,"UAV")
+            self.recovery_status("RETURNING_TO_PARKED_CARRIER")
+            self.fly((current.x,current.y,altitude),None,True)
+            self.fly((receiver.x,receiver.y,altitude),None)
+            self.land_at((receiver.x,receiver.y),None,namespace)
+            self.recovery_status("DOCKED")
+        except Exception as error:
+            self.recovery_status("FALLBACK_LANDING",str(error))
+            # Retain native PX4 landing if the receiver or route is unavailable.
+            self.call(self.land,None)
+            self.wait(lambda:self.uav_state==0,None,600.)
+            self.recovery_status("LANDED_UNDOCKED","Fallback landing; ground navigation stays paused")
 
     def ground_delivery(self,batches,goal,result):
         """Single central carrier baseline: identical door targets, no UAV mass."""
@@ -525,6 +640,8 @@ class RegionalMissionManager(Node):
                 self.drive(ns,self.layout.buildings[order["target"]]["delivery_pose"],goal)
                 self.phase_to("GROUND_DELIVERY",goal,order["target"],ns)
                 self.hover(goal,self.layout.data["flight"]["ground_service_seconds"])
+                if getattr(self,"enable_energy",False) is True:
+                    self.energy_transfer(ns,"delivered",order["mass"],goal)
                 self.event_pub.publish(String(data=json.dumps({"event":"SIMULATED_DELIVERED",
                     "mode":"ugv_only","carrier":ns,"target":order["target"],
                     "mass_kg":order["mass"],"floor":0})))
@@ -539,6 +656,8 @@ class RegionalMissionManager(Node):
             batches=self.batches(goal.request)
             self.phase_to("PREPARING",goal)
             self.ready(goal)
+            if getattr(self,"enable_energy",False) is True:
+                self.energy_start(goal.request,batches,goal)
             if self.delivery_mode=="ugv_only":
                 self.ground_delivery(batches,goal,result)
                 self.phase_to("COMPLETED",goal)
@@ -565,9 +684,13 @@ class RegionalMissionManager(Node):
                 depot=spec["depot_pose"]
                 self.phase_to("UGV_PARKING",goal,region,ns)
                 self.drive(ns,depot[:2]+[depot[3]],goal)
+                if getattr(self,"enable_energy",False) is True:
+                    self.energy_transfer(hub_ns,"uav",sum(o["mass"] for o in orders),goal)
                 self.payload_pub.publish(Float32(data=float(sum(o["mass"] for o in orders))))
                 self.air_transport(depot[:2],goal,ns)
                 self.phase_to("CARGO_HANDOVER",goal,region,ns)
+                if getattr(self,"enable_energy",False) is True:
+                    self.energy_transfer("uav",ns,sum(o["mass"] for o in orders),goal)
                 self.event_pub.publish(String(data=json.dumps({"event":"HANDOVER","region":region,
                     "carrier":self.carrier,"parcels":orders,
                     "transfer_point":spec["cargo_transfer"],"cargo_operation":"simulated"})))
@@ -576,11 +699,15 @@ class RegionalMissionManager(Node):
                     self.phase_to("UGV_LAST_MILE",goal,order["target"],ns)
                     self.drive(ns,self.layout.buildings[order["target"]]["delivery_pose"],goal)
                     if order["floor"]:
+                        if getattr(self,"enable_energy",False) is True:
+                            self.energy_transfer(ns,"uav",order["mass"],goal)
                         self.payload_pub.publish(Float32(data=float(order["mass"])))
                         self.floor_delivery(ns,order,goal)
                     else:
                         self.phase_to("GROUND_DELIVERY",goal,order["target"],ns)
                         self.hover(goal,self.layout.data["flight"]["ground_service_seconds"])
+                        if getattr(self,"enable_energy",False) is True:
+                            self.energy_transfer(ns,"delivered",order["mass"],goal)
                     self.event_pub.publish(String(data=json.dumps({"event":"SIMULATED_DELIVERED",
                         "region":region,"target":order["target"],"floor":order["floor"],"mass_kg":order["mass"]})))
                     result.completed_targets+=1
@@ -595,22 +722,32 @@ class RegionalMissionManager(Node):
             result.message="Regional transport, simulated handover and last-mile delivery completed"
             goal.succeed()
         except Exception as error:
-            if self.nav_goal:
-                self.nav_goal.cancel_goal_async()
-            if self.fly_goal:
-                self.fly_goal.cancel_goal_async()
-            for publisher in self.stop_pubs.values():
-                publisher.publish(Twist())
+            self.stop_active_motion()
+            recovery_error=""
+            if self.delivery_mode=="cooperative" and not getattr(self,"shutdown_requested",False):
+                try:
+                    self.recover_uav()
+                except Exception as failure:
+                    recovery_error="; recovery failed: "+str(failure)
+                    self.recovery_status("FAILED",str(failure))
             self.phase_to("CANCELED" if goal.is_cancel_requested else "FAILED",goal)
             result.success=False
-            result.message=str(error)
+            result.message=str(error)+recovery_error
             if goal.is_cancel_requested:
                 goal.canceled()
             else:
                 goal.abort()
             self.get_logger().error(result.message)
         finally:
-            if self.delivery_mode=="cooperative" and self.uav_state==0 and self.paused_navigation:
+            if (getattr(self,"enable_energy",False) is True
+                    and getattr(self,"energy_session","") and not getattr(self,"shutdown_requested",False)):
+                try:
+                    self.energy_finish()
+                except Exception as error:
+                    self.get_logger().error("Could not restore idle charging target: "+str(error))
+            if (self.delivery_mode=="cooperative" and self.uav_state==0 and self.carrier
+                    and self.paused_navigation and not getattr(self,"shutdown_requested",False)
+                    and (result.success or getattr(self,"recovery_verified",False) is True)):
                 try:
                     self.set_navigation_paused(False,None)
                 except Exception as error:
@@ -621,16 +758,5 @@ class RegionalMissionManager(Node):
 
 
 def main():
-    rclpy.init()
-    node=RegionalMissionManager()
-    executor=MultiThreadedExecutor(num_threads=6)
-    executor.add_node(node)
-    try:
-        executor.spin()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        executor.shutdown()
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+    from uav_control.runtime import run_node
+    run_node(RegionalMissionManager)

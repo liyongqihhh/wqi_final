@@ -1,4 +1,4 @@
-"""Serial five-battery admission forecast; no ROS, simulation or battery mutation."""
+"""Serial finite-fleet admission forecast; no ROS or battery mutation."""
 
 from dataclasses import dataclass
 import math
@@ -24,6 +24,12 @@ class FlightLeg:
 
 
 @dataclass(frozen=True)
+class WaitLeg:
+    duration_s: float
+    docked_owner: str
+
+
+@dataclass(frozen=True)
 class RelayEnergyForecast:
     feasible: bool
     reason: str
@@ -33,22 +39,26 @@ class RelayEnergyForecast:
     charging_wait_s: float
 
 
-def evaluate_relay_energy(steps, ugv, uav, initial_wh):
+def evaluate_relay_energy(steps, ugv, uav, initial_wh, *, roles=("a", "b")):
     """Forecast serial travel, idle loads, payload changes and finite charging.
 
     Opportunistic charging during ground transit is not credited. Travel uses
     configured speed and margin, not a bound on arbitrary dynamic-obstacle waits.
     """
+    roles = tuple(roles)
+    if not roles or len(set(roles)) != len(roles) or any(not isinstance(r, str) or not r for r in roles):
+        raise ValueError("Distinct nonempty carrier roles are required")
     capacities = {"uav": uav.capacity_wh, **{
-        f"{r}_{kind}": capacity for r in ("a", "b") for kind, capacity in (
+        f"{r}_{kind}": capacity for r in roles for kind, capacity in (
             ("drive", ugv.drive_capacity_wh), ("charge", ugv.charging_capacity_wh))}}
     reserve = {"uav": uav.capacity_wh * uav.reserve_percentage, **{
-        f"{r}_{kind}": value for r in ("a", "b") for kind, value in (
+        f"{r}_{kind}": value for r in roles for kind, value in (
             ("drive", ugv.drive_reserve_wh), ("charge", ugv.charging_reserve_wh))}}
     if set(initial_wh) != set(capacities) or any(
             not isinstance(v, (float, int)) or not math.isfinite(v)
             or not 0 <= v <= capacities[k] for k, v in initial_wh.items()):
-        raise ValueError("A fresh finite energy value is required for all five batteries")
+        count = "five batteries" if roles == ("a", "b") else f"{len(capacities)} batteries"
+        raise ValueError("A fresh finite energy value is required for all " + count)
     energy = dict(initial_wh)
     duration = charging = 0.0
     model = UgvEnergyModel(ugv)
@@ -61,19 +71,22 @@ def evaluate_relay_energy(steps, ugv, uav, initial_wh):
     def idle(seconds, owner, moving=None, cargo=0.0):
         nonlocal duration
         duration += seconds
-        for role in ("a", "b"):
+        for role in roles:
             power = model.drive_power_w(ugv.planning_speed_mps, 0, 0, cargo, owner == role) \
                 if moving == role else ugv.idle_power_w
             energy[f"{role}_drive"] -= power * seconds / 3600
         if owner:
-            energy[f"{owner}_charge"] -= ugv.charger_idle_power_w * seconds / 3600
+            key = f"{owner}_charge"
+            # The real converter switches off at reserve, including its idle
+            # load. A full UAV need not reject an otherwise feasible sortie.
+            energy[key] = max(reserve[key], energy[key] - ugv.charger_idle_power_w * seconds / 3600)
 
     reason = failure(False)
     for step in steps:
         if reason:
             break
         if isinstance(step, DriveLeg):
-            if (step.role not in ("a", "b") or step.docked_owner not in ("", "a", "b")
+            if (step.role not in roles or step.docked_owner not in ("", *roles)
                     or not all(math.isfinite(v) and v >= 0 for v in (step.distance_m, step.cargo_kg))):
                 raise ValueError("Invalid relay drive leg")
             seconds = step.distance_m / ugv.planning_speed_mps * ugv.prediction_margin_factor
@@ -82,8 +95,15 @@ def evaluate_relay_energy(steps, ugv, uav, initial_wh):
             # inhibited by the target-SOC hysteresis; budget the larger load.
             standby_w = max(uav.docked_idle_power_w, uav.landed_idle_power_w)
             energy["uav"] -= standby_w * seconds / (3600 * uav.discharge_efficiency)
+        elif isinstance(step, WaitLeg):
+            if (not math.isfinite(step.duration_s) or step.duration_s < 0
+                    or step.docked_owner not in ("", *roles)):
+                raise ValueError("Invalid parked service interval")
+            idle(step.duration_s, step.docked_owner)
+            energy["uav"] -= max(uav.docked_idle_power_w, uav.landed_idle_power_w) * step.duration_s / (
+                3600 * uav.discharge_efficiency)
         elif isinstance(step, FlightLeg):
-            if (step.source not in ("a", "b") or step.destination not in ("a", "b")
+            if (step.source not in roles or step.destination not in roles
                     or not all(math.isfinite(v) and v >= 0 for v in (
                         step.consumption_wh, step.duration_s, step.departure_target_wh))
                     or step.departure_target_wh < step.consumption_wh + reserve["uav"]):

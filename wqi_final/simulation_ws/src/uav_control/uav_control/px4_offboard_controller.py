@@ -3,7 +3,6 @@ import time
 
 import rclpy
 from geometry_msgs.msg import Twist
-from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, Float64, Int8, String
 from sensor_msgs.msg import BatteryState
@@ -670,16 +669,5 @@ class Px4OffboardController(FlightActionServer):
 
 
 def main(args=None):
-    rclpy.init(args=args)
-    node = Px4OffboardController()
-    executor = MultiThreadedExecutor(num_threads=6)
-    executor.add_node(node)
-    try:
-        executor.spin()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        executor.shutdown()
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+    from uav_control.runtime import run_node
+    run_node(Px4OffboardController, args=args)
