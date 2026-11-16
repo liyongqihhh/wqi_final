@@ -9,6 +9,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(behaviortree_cpp_v3 REQUIRED)
 find_package(dwb_core REQUIRED)
+find_package(dwb_critics REQUIRED)
 find_package(dwb_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_2d_msgs REQUIRED)
@@ -68,6 +69,7 @@ ament_target_dependencies(
 )
 
 add_library(ugvcar_predictive_collision_critic SHARED
+  src/approach_path_align_critic.cpp
   src/path_heading_critic.cpp
   src/predictive_collision_critic.cpp
 )
@@ -82,6 +84,7 @@ target_link_libraries(
 ament_target_dependencies(
   ugvcar_predictive_collision_critic
   dwb_core
+  dwb_critics
   dwb_msgs
   geometry_msgs
   nav_2d_msgs
@@ -155,6 +158,10 @@ if(BUILD_TESTING)
     test_predictive_collision_model ugvcar_navigation_algorithms
   )
   target_include_directories(test_predictive_collision_model PRIVATE include)
+  ament_add_gtest(test_approach_path_align test/test_approach_path_align.cpp)
+  target_link_libraries(test_approach_path_align ugvcar_predictive_collision_critic)
+  ament_target_dependencies(test_approach_path_align dwb_critics geometry_msgs nav_2d_msgs)
+  target_include_directories(test_approach_path_align PRIVATE include)
   ament_add_gtest(
     test_path_heading_model
     test/test_path_heading_model.cpp

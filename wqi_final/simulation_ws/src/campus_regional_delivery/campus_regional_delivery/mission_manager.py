@@ -20,13 +20,14 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import Bool, Float32, Float64, Int8, String
-from std_srvs.srv import Trigger
+from std_srvs.srv import Empty, Trigger
 from uav_interfaces.action import FlyToPose
 from uav_interfaces.srv import SelectCarrier
 import yaml
 
 from campus_regional_delivery.layout import RegionalLayout, partition_orders
 from campus_regional_delivery.energy_mission import RegionalEnergyMixin
+from campus_regional_delivery.mission_progress import RouteProgressWatchdog
 
 
 class RegionalMissionManager(RegionalEnergyMixin, Node):
@@ -68,6 +69,13 @@ class RegionalMissionManager(RegionalEnergyMixin, Node):
         self.init_energy(qos)
         self.declare_parameter("require_dynamic_traffic",False)
         self.require_dynamic_traffic=bool(self.get_parameter("require_dynamic_traffic").value)
+        self.declare_parameter("pause_on_failed_test",False)
+        self.declare_parameter("drive_stagnation_timeout_sim_s",60.)
+        self.pause_on_failed_test=bool(self.get_parameter("pause_on_failed_test").value)
+        self.drive_stagnation_timeout=float(self.get_parameter("drive_stagnation_timeout_sim_s").value)
+        self.simulation_paused=False
+        self.pause_physics=self.create_client(Empty,"/pause_physics",callback_group=self.group)
+        self.simulation_safety_pub=self.create_publisher(String,"simulation_safety",qos)
         self.dynamic_traffic_ready=False
         if self.require_dynamic_traffic:
             self.create_subscription(String,"/dynamic_obstacles/manifest",self._traffic_manifest,qos,
@@ -219,6 +227,9 @@ class RegionalMissionManager(RegionalEnergyMixin, Node):
         return batches
 
     def goal(self,request):
+        if getattr(self,"simulation_paused",False) is True:
+            self.report_admission(request,False,"Failed test paused physics; restart the scene before another order")
+            return GoalResponse.REJECT
         try:
             self.batches(request)
             if (getattr(self,"require_dynamic_traffic",False) is True
@@ -374,11 +385,32 @@ class RegionalMissionManager(RegionalEnergyMixin, Node):
             request.pose.pose.orientation.z,request.pose.pose.orientation.w=math.sin(pose[2]/2),math.cos(pose[2]/2)
             client=self.nav_clients[namespace]
             self.wait(client.server_is_ready,goal,30)
-            handle=self.future(client.send_goal_async(request),goal)
+            now_sim=lambda:self.get_clock().now().nanoseconds/1e9
+            watchdog=RouteProgressWatchdog(now_sim(),
+                self.drive_stagnation_timeout if getattr(self,"require_dynamic_traffic",False) else 0.)
+            invalid_reported=[False]
+            def feedback(message):
+                position=self.poses[namespace].pose.pose.position
+                direct=math.hypot(position.x-pose[0],position.y-pose[1])
+                distance=float(message.feedback.distance_remaining)
+                if not watchdog.observe(distance,now_sim(),direct) and distance>0 and not invalid_reported[0]:
+                    invalid_reported[0]=True
+                    self.get_logger().warning("Ignoring prior-plan Nav2 progress feedback: "
+                        f"remaining={distance:.3f} m, current goal lower bound={direct:.3f} m ({namespace})")
+            handle=self.future(client.send_goal_async(request,feedback_callback=feedback),goal)
             if not handle.accepted:
                 raise RuntimeError("UGV navigation goal rejected")
             self.nav_goal=handle
-            result=self.future(handle.get_result_async(),goal,7200)
+            future=handle.get_result_async()
+            def finished():
+                if not future.done() and watchdog.expired(now_sim()):
+                    reason=("UGV route progress telemetry unavailable" if watchdog.sample[0] is None
+                        else "UGV route stagnation: remaining path has not improved")
+                    raise RuntimeError(reason+" for "
+                        f"{watchdog.timeout:.1f} simulation seconds ({namespace})")
+                return future.done()
+            self.wait(finished,goal,7200)
+            result=future.result()
             self.nav_goal=None
             if result.status!=4:
                 raise RuntimeError(f"UGV navigation failed: {result.status}")
@@ -578,6 +610,24 @@ class RegionalMissionManager(RegionalEnergyMixin, Node):
         self.recovery_pub.publish(String(data=json.dumps(details)))
         self.get_logger().info("Regional recovery: "+json.dumps(details))
 
+    def pause_failed_test(self):
+        """Test-only world freeze; never call an airborne vehicle landed."""
+        if not getattr(self,"pause_on_failed_test",False):
+            return False
+        if self.delivery_mode=="cooperative" and self.uav_state!=0:
+            return False
+        try:
+            self.wait(self.pause_physics.service_is_ready,None,5.)
+            self.future(self.pause_physics.call_async(Empty.Request()),None,10.)
+        except Exception as error:
+            self.get_logger().error("Failed-test physics pause was not confirmed: "+str(error))
+            return False
+        self.simulation_paused=True
+        self.simulation_safety_pub.publish(String(data=json.dumps({
+            "status":"PHYSICS_PAUSED_AFTER_FAILED_TEST","uav_state":self.uav_state,
+            "carrier":self.carrier,"scope":"simulation test stop, not autonomous obstacle avoidance"})))
+        return True
+
     def recover_uav(self):
         """Recover to the assigned parked receiver, never mark the order successful."""
         self.recovery_status("STOPPING")
@@ -616,7 +666,10 @@ class RegionalMissionManager(RegionalEnergyMixin, Node):
             altitude=float(self.layout.data["flight"]["cruise_altitude"])
             self.phase_to("RECOVERY_RETURNING",None,namespace,"UAV")
             self.recovery_status("RETURNING_TO_PARKED_CARRIER")
-            self.fly((current.x,current.y,altitude),None,True)
+            # A cruise-height correction is not a platform approach: preserve
+            # dynamic sensing, and do not hover on a crossing for a tiny Z error.
+            if abs(current.z-altitude)>.5:
+                self.fly((current.x,current.y,altitude),None,current.z<receiver.z+2.)
             self.fly((receiver.x,receiver.y,altitude),None)
             self.land_at((receiver.x,receiver.y),None,namespace)
             self.recovery_status("DOCKED")
@@ -724,12 +777,17 @@ class RegionalMissionManager(RegionalEnergyMixin, Node):
         except Exception as error:
             self.stop_active_motion()
             recovery_error=""
-            if self.delivery_mode=="cooperative" and not getattr(self,"shutdown_requested",False):
+            paused=self.pause_failed_test() if getattr(self,"pause_on_failed_test",False) else False
+            if paused:
+                self.recovery_status("SIMULATION_PAUSED","Failed test frozen before further traffic motion")
+            if not paused and self.delivery_mode=="cooperative" and not getattr(self,"shutdown_requested",False):
                 try:
                     self.recover_uav()
                 except Exception as failure:
                     recovery_error="; recovery failed: "+str(failure)
                     self.recovery_status("FAILED",str(failure))
+                if getattr(self,"pause_on_failed_test",False):
+                    self.pause_failed_test()
             self.phase_to("CANCELED" if goal.is_cancel_requested else "FAILED",goal)
             result.success=False
             result.message=str(error)+recovery_error
@@ -746,6 +804,7 @@ class RegionalMissionManager(RegionalEnergyMixin, Node):
                 except Exception as error:
                     self.get_logger().error("Could not restore idle charging target: "+str(error))
             if (self.delivery_mode=="cooperative" and self.uav_state==0 and self.carrier
+                    and not getattr(self,"simulation_paused",False)
                     and self.paused_navigation and not getattr(self,"shutdown_requested",False)
                     and (result.success or getattr(self,"recovery_verified",False) is True)):
                 try:

@@ -53,7 +53,8 @@ def fleet_model(original, namespace):
     return ET.tostring(root, encoding="unicode")
 
 
-def fleet_parameters(original, navigation_share, namespace, peers, map_resolution=.2, dynamic=False):
+def fleet_parameters(original, navigation_share, namespace, peers, map_resolution=.2, dynamic=False,
+                     execution_profile="stable"):
     map_resolution = float(map_resolution)
     if not math.isfinite(map_resolution) or not .05 <= map_resolution <= .2:
         raise ValueError("Regional map resolution must be in [0.05, 0.2]")
@@ -73,6 +74,10 @@ def fleet_parameters(original, navigation_share, namespace, peers, map_resolutio
     global_["inflation_layer"]["inflation_radius"] = max(
         global_["inflation_layer"]["inflation_radius"], global_["robot_radius"] + padding)
     if dynamic:
+        # Match navigation envelopes; the Gazebo collision body is unchanged.
+        local["robot_radius"] = global_["robot_radius"]
+        local["inflation_layer"]["inflation_radius"] = max(
+            local["inflation_layer"]["inflation_radius"], local["robot_radius"]+.10)
         # Preserve physical envelope/speed. Measured occupancy, not future
         # collision strips, belongs to the global grid; DWB owns TTC scoring.
         global_["update_frequency"],global_["publish_frequency"]=5.,2.
@@ -93,6 +98,13 @@ def fleet_parameters(original, navigation_share, namespace, peers, map_resolutio
         # before XY arrival and can make zero speed a local optimum. Keep
         # path/progress critics; RotateToGoal handles yaw after XY arrival.
         controller["FollowPath"]["GoalAlign.scale"]=0.
+        # Keep proven travel alignment, but remove its projected-nose bias
+        # near arrival rather than weakening alignment over the whole route.
+        follow=controller["FollowPath"]
+        follow["critics"]=["ApproachPathAlign" if c=="PathAlign" else c for c in follow["critics"]]
+        for suffix in (".scale",".forward_point_distance"):
+            follow["ApproachPathAlign"+suffix]=follow.pop("PathAlign"+suffix)
+        follow["ApproachPathAlign.disable_distance"]=1.2
         # A bounded soft preference only among collision-free candidates
         # prevents indefinite pure rotation near moving traffic. The 1e6
         # collision term and the final collision monitor still dominate.
@@ -112,10 +124,13 @@ def fleet_parameters(original, navigation_share, namespace, peers, map_resolutio
             params["plugins"].insert(params["plugins"].index("inflation_layer"), layer)
             params[layer] = {"plugin":"cooperative_delivery::PeerVehicleLayer",
                              "pose_topic":f"/{peer}/ground_truth/odom", "radius":.60, "timeout":1.0}
+    from campus_regional_delivery.runtime_profile import tune_navigation
+    tune_navigation(data,execution_profile)
     return {namespace:data}
 
 
-def prepare_uav_model(iris, imu_plugin, description_share, namespaces, output, visualize=False):
+def prepare_uav_model(iris, imu_plugin, description_share, namespaces, output, visualize=False,
+                      execution_profile="stable"):
     source = description_share / "scripts/prepare_px4_model.py"
     spec = importlib.util.spec_from_file_location("project_px4_model", source)
     module = importlib.util.module_from_spec(spec)
@@ -134,6 +149,8 @@ def prepare_uav_model(iris, imu_plugin, description_share, namespaces, output, v
         carrier = ET.SubElement(plugin, "allowedCarrier")
         ET.SubElement(carrier, "model").text = name
         ET.SubElement(carrier, "link").text = name + "/base_footprint"
+    from campus_regional_delivery.runtime_profile import tune_cameras
+    tune_cameras(tree.getroot(),execution_profile)
     ET.indent(tree, space="  ")
     tree.write(output, encoding="unicode", xml_declaration=False)
 
@@ -149,10 +166,16 @@ def fleet_rviz(original, regions, include_uav=True, include_energy=False, includ
     for region in regions.values():
         ns = region["namespace"]
         for original_display in displays:
-            if original_display["Name"] not in ("Campus UGV", "UGV Laser", "UGV Local Costmap", "UGV Nav2 Plan"):
+            if original_display["Name"] not in ("Campus UGV", "UGV Laser", "UGV Local Costmap", "UGV Global Costmap", "UGV Nav2 Plan"):
                 continue
             clone = deepcopy(original_display)
             clone["Name"] = region["vehicle_label"] + " " + clone["Name"]
+            if original_display["Name"] == "UGV Global Costmap":
+                # Four superimposed full-campus grids are unreadable. All
+                # remain selectable; show the first regional car initially.
+                selected = "ugv_01" if any(v["namespace"] == "ugv_01" for v in regions.values()) else next(iter(regions.values()))["namespace"]
+                clone["Enabled"] = clone["Value"] = ns == selected
+                clone["Alpha"] = .38
             for field in ("Description Topic", "Topic", "Update Topic"):
                 if field in clone:
                     clone[field]["Value"] = "/" + ns + clone[field]["Value"]

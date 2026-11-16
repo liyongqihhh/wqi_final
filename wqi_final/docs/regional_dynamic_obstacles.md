@@ -17,12 +17,21 @@
 同一种子下，高档包含低档选中的路线。每区始终有核心交通点，不会随机选完后
 某一区没有空中障碍。旧地图最高档仅 2 个空中障碍，新入口最高档为 15 个。
 
-地面包含横穿、斜向、同向/对向往返交通，速度约 0.42～0.65 m/s。
-空中障碍为半径 0.75 m 的红色实体球，速度约 0.75～0.83 m/s；路线横穿实际
-总站至 A/B/C 车的空中航段，以 15 m 巡航面为中心，包含上下相差 2.4 m 的斜穿。
-它们有碰撞体，不是只画在 RViz 的装饰标记。
+默认 `obstacle_motion:=random`，地面在道路上的二维活动范围内运动，速度上限
+约 0.42～0.65 m/s；空中为半径 0.75 m 的实体球，速度上限约 0.75～0.83 m/s。
+空中活动中心分散在实际总站至 A/B/C 的航段两侧，分别为 13.5、16.5、15、18、12 m，
+各自还可连续上下运动 ±2 m，位置不共线。它们都有物理碰撞体，不是装饰标记。
+采用随机目标加相关速度扰动，以物理速度驱动、限制加速度，不逐帧随机修改坐标。
+详细公式、范围校验和验收边界见 [随机运动与能量核对](energy_random_verification.md)。
 
-## 2. 相遇触发而非障碍物让行
+## 2. 随机交通与固定路线对照
+
+随机模式从模型插入时开始运动，不读取机器人位置，不让路、不追赶，也不因
+机器人停止而停止。速度连续、加速度有界，运动保持在经过道路、建筑、交接区
+净空与障碍之间间距检查的范围内。相同种子可重复伪随机输入，但物理/通信时序
+不同不能保证整场机器人轨迹逐点相同。更换种子须重启，避免运行中瞬移。
+
+以下候遇触发行为仅属于 `obstacle_motion:=route` 固定路线对照模式：
 
 障碍先在路线端点候遇。机器人以非零速度接近指定交会点时，触发该障碍开始
 固定路线往返。触发距离按名义机器人速度和障碍行程选取，以提高可重复相遇概率。
@@ -50,7 +59,7 @@ source ./setup_workspace.bash
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ros2 launch campus_regional_delivery regional_campus.launch.py \
   enable_energy_constraints:=true enable_dynamic_obstacles:=true \
-  obstacle_density:=extreme obstacle_seed:=42 gui:=true rviz:=true
+  obstacle_density:=extreme obstacle_seed:=42 obstacle_motion:=random gui:=true rviz:=true
 ```
 
 需要其他档位只修改 `obstacle_density`。不考虑电量时用
@@ -105,18 +114,20 @@ ros2 launch campus_regional_delivery regional_campus.launch.py \
   enable_dynamic_obstacles:=true obstacle_density:=extreme gui:=true rviz:=true
 ```
 
-纯 UGV 不生成 UAV，因此候遇的空中障碍不会被 UAV 激活；它不是空中避障测试。
+纯 UGV 不生成 UAV，因此不是空中避障测试。随机模式的空中障碍仍连续运动；
+固定路线对照模式中的空中候遇障碍不会被 UAV 激活。
 最高档增加实际模型和传感器负载，VirtualBox 下可能明显降低实时率。墙钟耗时不能
 当作仿真配送耗时，两种时钟和相同任务窗口应在正式结果中分别记录。
 
 ## 4. Gazebo 与 RViz
 
-- Gazebo 地面为黄色实体柱，空中为红色实体球，激活后持续运动。
-- RViz 的 `Dynamic Ground and Air Traffic` 显示相同坐标的实体和红色空中交通线。
-  半透明表示尚未触发，亮色表示实际检测到运动。
+- Gazebo 地面为黄色实体柱，空中为红色实体球，随机模式生成后持续运动。
+- RViz 的 `Dynamic Ground and Air Traffic` 显示真实位置和淡色随机活动范围线框，
+  不是把直线当成随机轨迹。固定路线模式才显示空中交通线。
 - UAV 灰线是名义区域航段，黄色 `UAV Sensor Replanned Route` 是传感器重规划路径，
   `UAV Actual Flight Path` 是实际飞行轨迹。不要把灰线当成实时避障结果。
-- 每辆 UGV 保留各自的 Nav2 黄色路径、激光和局部代价地图；不共用动态跟踪器。
+- 每辆 UGV 保留各自的 Nav2 黄色路径、激光、局部和全局代价地图；不共用动态跟踪器。
+  默认显示 `UGV-01 UGV Global Costmap`，其他三车可在 Displays 勾选；建议每次只显示一层全局地图。
 - Gazebo 雷达蓝色射线仍由 `visualize_sensor_rays` 控制，默认关闭示意但传感器运行。
 
 15 m 是巡航基准，不是禁止改变的高度。UAV 三维绕行可短暂升降，并回到目标航段。

@@ -50,8 +50,14 @@ ros2 launch campus_regional_delivery regional_campus.launch.py gui:=true rviz:=t
 
 **五档空地动态避障：**追加 `enable_dynamic_obstacles:=true obstacle_density:=extreme`。
 五个有效档位为 `low / medium / high / very_high / extreme`，关闭另用 `none`。
-最高档为 **18 个地面障碍＋15 个空中障碍**，空中路线穿过实际 15 m 航路，包含
-斜向升降穿越；不是沿用旧地图的少量远处障碍。完整启动、就绪检查、颜色/路径含义
+当前四车入口默认 `obstacle_motion:=random`：地面二维、空中三维的有界连续随机运动，
+不再沿一条固定直线往返。最高档仍为 18 个地面与 15 个空中障碍。
+RViz 默认打开 `UGV-01 UGV Global Costmap`；其他三车的全局代价地图在 Displays 中勾选，
+建议一次显示一辆，避免四层全校园栅格互相遮挡。
+九电池系统已加入独立公式核对和在线能量收支检查，详见
+[能量一致性与随机障碍说明](docs/energy_random_verification.md)。
+最高档为 **18 个地面障碍＋15 个空中障碍**，空中障碍分散在实际航路附近的不同高度，
+并连续随机升降；不是沿用旧地图的少量远处障碍。完整启动、就绪检查、颜色/路径含义
 及验收边界见 [五档动态避障说明](docs/regional_dynamic_obstacles.md)。
 
 仅检查地图和四辆车时，在最后一条命令追加 `uav:=false`。
@@ -600,15 +606,30 @@ ros2 topic echo /fmu/out/vehicle_status_v1 --once
 
 ## 4. 动态障碍启动方法
 
-本轮最终完整测试为 **862 条记录、0 错误、0 失败、23 跳过**。
+11 月 14 日最终全工作空间编译 **16 包成功**；测试为 **918 条记录、0 错误、0 失败、26 跳过**（含包装项）。
 单车移动障碍专项及独立 PX4 三维绕障/降落专项已通过；最高档四车、33 个障碍、
 九电池与 PX4 联合启动检查通过，但出现遥测延迟和强制退出，完整协同配送尚未
 通过验收。不能把加载就绪等同于配送成功。见 [动态避障验收记录](docs/regional_dynamic_acceptance.md)。
 
-**2026-11-14 已知问题：**最高档实验楼三楼双界面复测未通过。UAV 已飞至 A 区车并完成
+**2026-11-13 至 14 日历史失败：**最高档实验楼三楼双界面复测未通过。UAV 已飞至 A 区车并完成
 停靠交接，但安全球间距不足；UGV 在道路边缘持续往复、规划起点不可通行，本轮按卡滞
 失败主动取消，未完成三楼投递和返航。取消后另发生一次地面接触，不能混算为正常导航
-中的碰撞。本次提交保留现状及失败说明，不是最高档已验收的稳定版本。
+中的碰撞。原始失败记录保留，不是最高档已验收的稳定版本。
+
+**11 月 14 日增量修正：**道路推进评分、局部/全局包络一致性、门口自适应路径对齐，
+以及 UAV 速度/点云年龄净空和局部安全出口已接入。单车最高档实验楼回归已到点，
+3 个移动会遇、0 实体接触；这不代替完整四车协同验收。第一次完整复测仍因 UAV
+安全间距不足被取消，恢复中有接触；加入点云运动估计后的第二轮仍失败。
+进一步修正后，第三轮已完成三楼投递和重新停靠、动态接触记录为 0，但返程被新增
+看门狗误判，整单未完成。独立诊断已复现新目标初始反馈残留旧短路径的原因，并增加
+当前目标距离下界校验。第四轮在起飞准备时 Gazebo 原生崩溃，未进入导航验收；
+已将关节操作改为 Gazebo 更新线程执行，20 次实际连接/解锁专项通过。
+第五轮已观察到出程、三楼投递和重新停靠，但记录停在返程中途，没有整单终态，
+不能写成完整往返成功。动态入口新增
+`drive_stagnation_timeout_sim_s:=60.0` 和 `pause_on_failed_test:=true`：持续无道路
+进展会结束订单；失败或取消且 UAV 已落地时暂停物理，避免障碍继续撞击停车车辆。
+暂停属于失败试验保护，不记为成功避障，之后需重启场景。详细公式、试验范围和
+双界面复测结果见 [验收记录](docs/regional_dynamic_acceptance.md#11-月-14-日修正与回归)。
 
 ### 当前四车校园：五档空地交通
 
@@ -632,6 +653,44 @@ UAV 采用基于三维点云的局部体素 Dijkstra 绕行。新鲜传感器/�
 不强行穿越。RViz 黄色 UAV 路线是重规划路径，灰色是名义航段。
 完整三终端命令、其余档位、检测与验收限制见
 [五档动态避障说明](docs/regional_dynamic_obstacles.md)。
+
+### 快速回归档
+
+新增 `execution_profile:=fast_test`，原 `stable` 档及原地图仍保留。快速档的 UGV
+直线限速为 **0.70 m/s**，保留原角速度上限，温和加速并扩大制动保护；UAV 区分
+局部前视点和最终目的地，避免全程误用慢速接近参考。接近终点、精确落车仍减速。
+
+快速档默认使用 PX4 支持的 **250 Hz / 4 ms** 锁步物理，观察窗口为 Gazebo 10 FPS、
+RViz 5 FPS；辅助相机保留为 2 FPS。雷达、IMU、碰撞体、建筑、障碍数量与能量积分
+单位不变。可用 `fast_physics_rate:=500` 恢复 500 Hz / 2 ms 进行精度对照。
+这不是直接倍乘时钟或跳过路径检查。正式对照实验应统一速度档和物理步长。
+
+首次或重新编译时启用优化，然后启动两个界面：
+
+```bash
+cd ~/design_final/wqi_final/simulation_ws
+bash ./build_workspace.sh --executor sequential --cmake-args -DCMAKE_BUILD_TYPE=Release
+source ./setup_workspace.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ros2 launch campus_regional_delivery regional_campus.launch.py \
+  execution_profile:=fast_test gui:=true rviz:=true rviz_render_driver:=llvmpipe \
+  enable_energy_constraints:=true enable_dynamic_obstacles:=true \
+  obstacle_density:=extreme obstacle_seed:=42
+```
+
+另一终端发送实验楼三楼完整往返：
+
+```bash
+cd ~/design_final/wqi_final/simulation_ws
+source ./setup_workspace.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ros2 action send_goal /regional_delivery/execute_mission \
+  cooperative_delivery_interfaces/action/ExecuteCooperativeDelivery \
+  "{targets: ['laboratory'], target_floors: [3], payload_masses_kg: [0.30], return_home: true}" --feedback
+```
+
+**30 分钟是完整往返的实测目标，不是所有硬件/订单的保证。当前计时验收待完成。**
+改动依据、实际参数、原始结果和限制见 [运行性能记录](docs/runtime_performance.md)。
 
 ### 旧校园兼容配置
 

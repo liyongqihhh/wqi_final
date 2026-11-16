@@ -13,6 +13,21 @@ from campus_dynamic_obstacles.scenario import load_obstacle_config,select_routes
 ROOT=Path(__file__).parents[1]
 
 
+def test_fast_encounter_release_accounts_for_faster_car_not_less_traffic():
+    layout=RegionalLayout(ROOT/"config/campus_regions.yaml")
+    normal,fast=(traffic_config(layout,v) for v in (.4,.7))
+    assert normal["densities"]==fast["densities"]
+    for name,route in fast["routes"].items():
+        old=normal["routes"][name]
+        assert route["waypoints"]==old["waypoints"]
+        assert route["speed_mps"]==old["speed_mps"]
+        if route["layer"]=="ground" and not name.endswith(("_ground_3","_ground_6")):
+            assert route["activation_distance"]>old["activation_distance"]
+        else:
+            assert route==old
+    with pytest.raises(ValueError):traffic_config(layout,float("nan"))
+
+
 def scenario(tmp_path):
     layout=RegionalLayout(ROOT/"config/campus_regions.yaml")
     path=tmp_path/"traffic.yaml";path.write_text(yaml.safe_dump(traffic_config(layout)))
@@ -123,10 +138,14 @@ def test_dynamic_fleet_uses_independent_predictive_topics_without_changing_stati
         assert controller["PredictiveCollision.tracks_topic"]==f"/{ns}/ugv/tracked_dynamic_obstacles"
         assert controller["max_vel_x"]==.4
         assert controller["GoalAlign.scale"]==0.
+        assert "ApproachPathAlign" in controller["critics"]
+        assert controller["ApproachPathAlign.forward_point_distance"]==.70
+        assert controller["ApproachPathAlign.disable_distance"]==1.2
         assert controller["PredictiveCollision.motion_preference_weight"]==.00025
         assert controller["PathHeading.lookahead_distance"]==4.
         assert controller["PathHeading.activation_angle"]==.7
         assert controller["sim_time"]==3.
+        assert data["local_costmap"]["local_costmap"]["ros__parameters"]["robot_radius"]==data["global_costmap"]["global_costmap"]["ros__parameters"]["robot_radius"]
         assert controller["PredictiveCollision.prediction_horizon"]==8.
         assert controller["PredictiveCollision.safety_margin"]>=controller["max_vel_x"]**2/(2*abs(controller["decel_lim_x"]))
         assert data["planner_server"]["ros__parameters"]["GridBased"]["plugin"]=="ugvcar_navigation2/DStarLitePlanner"

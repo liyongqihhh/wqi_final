@@ -25,6 +25,23 @@ def test_limited_setpoint_returns_final_target_inside_step():
     assert limited_position_setpoint((0.8, -2.0, 3.0), target, 0.6) == target
 
 
+def test_local_lookahead_does_not_trigger_final_approach_far_from_delivery_goal():
+    point,approaching=adaptive_position_setpoint((0,0,10),(1.5,0,10),1.6,.6,4.,
+        arrival_target=(30,0,10))
+    assert point==(1.5,0.,10.)
+    assert not approaching
+    point,approaching=adaptive_position_setpoint((0,0,10),(1.5,0,10),1.6,.6,4.,
+        arrival_target=(3,0,10))
+    assert point==(.6,0.,10.)
+    assert approaching
+
+
+def test_arrival_target_validation_and_legacy_slowdown_are_preserved():
+    assert adaptive_position_setpoint((0,0,10),(1.5,0,10),1.6,.6,4.)==((.6,0.,10.),True)
+    with pytest.raises(ValueError):
+        adaptive_position_setpoint((0,0,10),(1.5,0,10),1.6,.6,4.,arrival_target=(float('nan'),0,10))
+
+
 def test_adaptive_setpoint_uses_shorter_step_near_target():
     far_setpoint, far_approaching = adaptive_position_setpoint(
         (0.0, 0.0, 0.0),

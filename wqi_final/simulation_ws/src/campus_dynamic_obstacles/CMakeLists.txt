@@ -14,6 +14,7 @@ add_library(campus_dynamic_obstacle_plugin SHARED
 )
 target_compile_features(campus_dynamic_obstacle_plugin PUBLIC cxx_std_17)
 target_include_directories(campus_dynamic_obstacle_plugin PRIVATE
+  include
   ${GAZEBO_INCLUDE_DIRS}
 )
 target_link_libraries(campus_dynamic_obstacle_plugin
@@ -33,6 +34,10 @@ install(DIRECTORY config launch
 )
 
 if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_bounded_random_motion test/test_bounded_random_motion.cpp)
+  target_include_directories(test_bounded_random_motion PRIVATE include)
+  target_compile_features(test_bounded_random_motion PUBLIC cxx_std_17)
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_pytest_test(test_scenario test/test_scenario.py)
   ament_add_pytest_test(test_gated_scenario test/test_gated_scenario.py)

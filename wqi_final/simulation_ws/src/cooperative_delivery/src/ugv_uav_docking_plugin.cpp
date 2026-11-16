@@ -1,4 +1,5 @@
 #include <gazebo/common/Plugin.hh>
+#include <gazebo/common/Events.hh>
 #include <gazebo/physics/physics.hh>
 #include <gazebo_ros/node.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -14,12 +15,20 @@
 #include <utility>
 #include <vector>
 
+#include "cooperative_delivery/simulation_work_queue.hpp"
+
 namespace cooperative_delivery
 {
 
 class UgvUavDockingPlugin : public gazebo::ModelPlugin
 {
 public:
+  ~UgvUavDockingPlugin() override
+  {
+    update_connection_.reset();
+    work_queue_->Close();
+  }
+
   void Load(gazebo::physics::ModelPtr model, sdf::ElementPtr sdf) override
   {
     uav_model_ = model;
@@ -69,49 +78,39 @@ public:
       "docked_carrier", status_qos);
     select_service_ = ros_node_->create_service<uav_interfaces::srv::SelectCarrier>(
       "select_carrier",
-      [this](const std::shared_ptr<uav_interfaces::srv::SelectCarrier::Request> request,
+      [this,
+      queue =
+      work_queue_](const std::shared_ptr<uav_interfaces::srv::SelectCarrier::Request> request,
       std::shared_ptr<uav_interfaces::srv::SelectCarrier::Response> response) {
-        std::lock_guard<std::mutex> guard(mutex_);
-        if (fixed_joint_) {
-          response->message = "Detach UAV before selecting another carrier";
-          return;
-        }
-        bool allowed = false;
-        for (const auto & carrier : allowed_carriers_) {
-          allowed = allowed || (request->model_name == carrier.first &&
-            request->link_name == carrier.second);
-        }
-        auto candidate = allowed ? world_->ModelByName(request->model_name) : nullptr;
-        if (!candidate || !candidate->GetLink(request->link_name)) {
-          response->message = "Requested carrier or docking link is unavailable";
-          return;
-        }
-        ugv_model_name_ = request->model_name;
-        ugv_link_name_ = request->link_name;
-        response->success = true;
-        response->message = "Docking target selected: " + ugv_model_name_;
+        Dispatch(queue, [this, request, response]() {Select(request, response);}, response);
       });
     attach_service_ = ros_node_->create_service<std_srvs::srv::Trigger>(
       "attach_uav",
-      std::bind(
-        &UgvUavDockingPlugin::Attach, this,
-        std::placeholders::_1, std::placeholders::_2));
+      [this, queue = work_queue_](const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+      std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+        Dispatch(queue, [this, request, response]() {Attach(request, response);}, response);
+      });
     detach_service_ = ros_node_->create_service<std_srvs::srv::Trigger>(
       "detach_uav",
-      std::bind(
-        &UgvUavDockingPlugin::Detach, this,
-        std::placeholders::_1, std::placeholders::_2));
+      [this, queue = work_queue_](const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+      std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+        Dispatch(queue, [this, request, response]() {Detach(request, response);}, response);
+      });
 
     PublishStatus(false);
+    update_connection_ = gazebo::event::Events::ConnectWorldUpdateBegin(
+      [this](const gazebo::common::UpdateInfo &) {work_queue_->Drain();});
     if (!sdf->HasElement("autoAttach") || sdf->Get<bool>("autoAttach")) {
-      auto initial_docking_response =
-        std::make_shared<std_srvs::srv::Trigger::Response>();
-      Attach(nullptr, initial_docking_response);
-      if (!initial_docking_response->success) {
-        RCLCPP_WARN(
-          ros_node_->get_logger(), "Initial UAV docking deferred: %s",
-          initial_docking_response->message.c_str());
-      }
+      work_queue_->Post(
+        [this]() {
+          auto response = std::make_shared<std_srvs::srv::Trigger::Response>();
+          Attach(nullptr, response);
+          if (!response->success) {
+            RCLCPP_WARN(
+              ros_node_->get_logger(), "Initial UAV docking deferred: %s",
+              response->message.c_str());
+          }
+        });
     }
     RCLCPP_INFO(
       ros_node_->get_logger(),
@@ -120,19 +119,62 @@ public:
   }
 
 private:
+  template<typename Response>
+  static void Dispatch(
+    const std::shared_ptr<SimulationWorkQueue> & queue,
+    std::function<void()> operation, const std::shared_ptr<Response> & response)
+  {
+    try {
+      if (queue->Invoke(std::move(operation))) {
+        return;
+      }
+      response->message = "Gazebo physics update unavailable; docking operation not applied";
+    } catch (const std::exception & error) {
+      response->message = std::string("Docking operation failed: ") + error.what();
+    } catch (...) {
+      response->message = "Docking operation failed with an unknown exception";
+    }
+    response->success = false;
+  }
+
+  void Select(
+    const std::shared_ptr<uav_interfaces::srv::SelectCarrier::Request> request,
+    std::shared_ptr<uav_interfaces::srv::SelectCarrier::Response> response)
+  {
+    std::lock_guard<std::mutex> guard(mutex_);
+    if (fixed_joint_) {
+      response->message = "Detach UAV before selecting another carrier";
+      return;
+    }
+    bool allowed = false;
+    for (const auto & carrier : allowed_carriers_) {
+      allowed = allowed ||
+        (request->model_name == carrier.first && request->link_name == carrier.second);
+    }
+    auto candidate = allowed ? world_->ModelByName(request->model_name) : nullptr;
+    if (!candidate || !candidate->GetLink(request->link_name)) {
+      response->message = "Requested carrier or docking link is unavailable";
+      return;
+    }
+    ugv_model_name_ = request->model_name;
+    ugv_link_name_ = request->link_name;
+    response->success = true;
+    response->message = "Docking target selected: " + ugv_model_name_;
+  }
+
   static std::string ReadString(
     const sdf::ElementPtr & sdf, const std::string & name,
     const std::string & fallback)
   {
     return sdf->HasElement(name) ?
-      sdf->GetElement(name)->Get<std::string>() : fallback;
+           sdf->GetElement(name)->Get<std::string>() : fallback;
   }
 
   static double ReadDouble(
     const sdf::ElementPtr & sdf, const std::string & name, double fallback)
   {
     return sdf->HasElement(name) ?
-      sdf->GetElement(name)->Get<double>() : fallback;
+           sdf->GetElement(name)->Get<double>() : fallback;
   }
 
   void PublishStatus(bool docked)
@@ -260,6 +302,8 @@ private:
   double maximum_docking_distance_{0.8};
   bool strict_docking_{false};
   std::mutex mutex_;
+  std::shared_ptr<SimulationWorkQueue> work_queue_{std::make_shared<SimulationWorkQueue>()};
+  gazebo::event::ConnectionPtr update_connection_;
 };
 
 GZ_REGISTER_MODEL_PLUGIN(UgvUavDockingPlugin)

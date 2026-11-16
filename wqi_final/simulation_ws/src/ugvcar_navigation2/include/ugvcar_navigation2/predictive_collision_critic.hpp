@@ -55,6 +55,7 @@ private:
   std::vector<CandidateEvaluation> evaluations_;
   geometry_msgs::msg::Pose2D current_pose_;
   geometry_msgs::msg::Pose2D current_goal_;
+  std::vector<TimedPoint2D> reference_path_;
   rclcpp::Subscription<
     ugvcar_navigation2_interfaces::msg::DynamicObstacleArray>::SharedPtr
     tracks_subscription_;

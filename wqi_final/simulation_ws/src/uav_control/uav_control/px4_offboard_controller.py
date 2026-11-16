@@ -647,7 +647,8 @@ class Px4OffboardController(FlightActionServer):
         self.deck_contact_started_ns = None
         self._publish_state(LANDING)
         self.precision_landing = (
-            odom is not None and self.map_reference is not None
+            self.target_landing_height is not None
+            and odom is not None and self.map_reference is not None
             and self._energy_bridge_ready())
         if self.precision_landing:
             point = odom.pose.pose.position
@@ -660,7 +661,8 @@ class Px4OffboardController(FlightActionServer):
                 getattr(VehicleCommand, "VEHICLE_CMD_DO_SET_MODE", 176), 1.0, 6.0)
             self.get_logger().info("PX4 precision landing: map-aligned XY hold and downward velocity")
         else:
-            self._set_landing_fault("PRECISION_LANDING_UNAVAILABLE")
+            self._set_landing_fault("PRECISION_LANDING_UNAVAILABLE"
+                if self.target_landing_height is not None else "")
             self._send_vehicle_command(
                 getattr(VehicleCommand, "VEHICLE_CMD_NAV_LAND", 21))
         response.success = True

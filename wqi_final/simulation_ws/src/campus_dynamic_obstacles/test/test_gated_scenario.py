@@ -34,6 +34,18 @@ def test_activation_never_reads_robots_again_after_release():
     assert "SetWorldPose" not in source
 
 
+def test_random_motion_sdf_has_a_volume_and_stable_individual_seed():
+    from campus_dynamic_obstacles.scenario import motion_seed
+    spawner=_load_spawner_module()
+    route=replace(_route("air"),motion_mode="bounded_random",bounds_min=(-1.,-1.,0.),
+                  bounds_max=(2.,2.,3.))
+    text=spawner.DynamicObstacleSpawner._sdf("actor",route,123)
+    controller=ET.fromstring(text).find("model/plugin[@name='route_controller']")
+    assert controller.find("motion_mode").text=="bounded_random"
+    assert controller.find("random_seed").text==str(motion_seed(123,route.name))
+    assert controller.find("bounds_max").text=="2.0 2.0 3.0"
+
+
 def test_extreme_spawning_keeps_only_one_service_request_in_flight():
     module=_load_spawner_module();spawner=module.DynamicObstacleSpawner
     futures=[];requests=[]

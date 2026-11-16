@@ -17,6 +17,12 @@ find_package(nav2_costmap_2d REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(Qt5Widgets REQUIRED)
+
+add_library(regional_view_rate SHARED src/regional_view_rate.cpp)
+target_compile_features(regional_view_rate PUBLIC cxx_std_17)
+target_include_directories(regional_view_rate PRIVATE ${GAZEBO_INCLUDE_DIRS})
+target_link_libraries(regional_view_rate gazebo_gui Qt5::Widgets ${GAZEBO_LIBRARIES})
 
 add_library(peer_vehicle_layer SHARED src/peer_vehicle_layer.cpp)
 target_compile_features(peer_vehicle_layer PUBLIC cxx_std_17)
@@ -28,6 +34,7 @@ add_library(ugv_uav_docking_plugin SHARED
   src/ugv_uav_docking_plugin.cpp
 )
 target_compile_features(ugv_uav_docking_plugin PUBLIC cxx_std_17)
+target_include_directories(ugv_uav_docking_plugin PRIVATE include)
 ament_target_dependencies(ugv_uav_docking_plugin
   gazebo_ros
   rclcpp
@@ -39,7 +46,7 @@ target_link_libraries(ugv_uav_docking_plugin ${GAZEBO_LIBRARIES})
 
 ament_python_install_package(${PROJECT_NAME})
 
-install(TARGETS ugv_uav_docking_plugin peer_vehicle_layer
+install(TARGETS ugv_uav_docking_plugin peer_vehicle_layer regional_view_rate
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
@@ -58,6 +65,9 @@ install(DIRECTORY config launch rviz
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_simulation_work_queue test/test_simulation_work_queue.cpp)
+  target_include_directories(test_simulation_work_queue PRIVATE include)
+  target_compile_features(test_simulation_work_queue PUBLIC cxx_std_17)
   ament_add_gtest(test_peer_vehicle_layer test/test_peer_vehicle_layer.cpp)
   target_link_libraries(test_peer_vehicle_layer peer_vehicle_layer)
   ament_target_dependencies(test_peer_vehicle_layer nav2_costmap_2d nav_msgs tf2_geometry_msgs)

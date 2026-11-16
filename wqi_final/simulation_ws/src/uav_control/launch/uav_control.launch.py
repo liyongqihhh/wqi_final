@@ -40,6 +40,8 @@ def generate_launch_description():
         DeclareLaunchArgument("use_sim_time", default_value="true"),
         DeclareLaunchArgument("enable_sim_velocity_aiding", default_value="false"),
         DeclareLaunchArgument("validate_dynamic_paths",default_value="false"),
+        DeclareLaunchArgument("dynamic_setpoint_max_step",default_value="0.8"),
+        DeclareLaunchArgument("dynamic_cruise_enabled",default_value="false"),
         DeclareLaunchArgument(
             "flight_backend",
             default_value="px4",
@@ -84,6 +86,8 @@ def generate_launch_description():
                 {"enable_sim_velocity_aiding": ParameterValue(
                     LaunchConfiguration("enable_sim_velocity_aiding"), value_type=bool)},
                 {"validate_dynamic_paths":ParameterValue(LaunchConfiguration("validate_dynamic_paths"),value_type=bool)},
+                {"dynamic_maximum_setpoint_step":ParameterValue(LaunchConfiguration("dynamic_setpoint_max_step"),value_type=float)},
+                {"dynamic_cruise_enabled":ParameterValue(LaunchConfiguration("dynamic_cruise_enabled"),value_type=bool)},
             ],
             condition=px4_selected,
         ),

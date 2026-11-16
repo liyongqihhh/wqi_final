@@ -53,6 +53,36 @@ def test_unknown_density_is_rejected(tmp_path: Path):
         select_routes(densities, routes, "missing", 1)
 
 
+@pytest.mark.parametrize("changes",[
+    {"motion_mode":"teleport"},
+    {"bounds_min":[-1,-1]},
+    {"bounds_max":[1,1,14]},
+    {"bounds_min":[float("nan"),-1,14]},
+    {"bounds_min":[2,-1,14]},
+    {"bounds_min":[1,-1,14]},
+    {"bounds_min":[.5,-1,14]},
+    {"layer":"ground"},
+])
+def test_random_bounds_reject_invalid_geometry_and_spawn(tmp_path, changes):
+    data=yaml.safe_load(CONFIG)
+    data["routes"]["air_a"].update(motion_mode="bounded_random",bounds_min=[-1,-1,14],
+                                     bounds_max=[1,1,16])
+    data["routes"]["air_a"].update(changes)
+    path=tmp_path/"invalid_random.yaml";path.write_text(yaml.safe_dump(data))
+    with pytest.raises(ObstacleScenarioError):load_obstacle_config(path)
+
+
+def test_random_bounds_accept_air_volume_and_ground_plane(tmp_path):
+    data=yaml.safe_load(CONFIG)
+    for name,raw in data["routes"].items():
+        z=raw["waypoints"][0][2]
+        raw.update(motion_mode="bounded_random",bounds_min=[-1,-1,z-(1 if name=="air_a" else 0)],
+                   bounds_max=[1,1,z+(1 if name=="air_a" else 0)])
+    path=tmp_path/"valid_random.yaml";path.write_text(yaml.safe_dump(data))
+    _,routes=load_obstacle_config(path)
+    assert all(route.motion_mode=="bounded_random" for route in routes)
+
+
 def test_obstacle_instance_name_matches_spawn_and_evaluation_topics():
     route = _route("ground")
     assert (

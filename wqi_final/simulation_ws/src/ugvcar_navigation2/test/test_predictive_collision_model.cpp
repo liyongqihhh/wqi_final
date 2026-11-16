@@ -9,6 +9,35 @@
 using ugvcar_navigation2::MovingCircle2D;
 using ugvcar_navigation2::TimedPoint2D;
 
+TEST(PredictiveCollisionModel, RoadProgressMayInitiallyMoveAwayFromBuilding)
+{
+  const std::vector<TimedPoint2D> road{{0, 0, 0}, {-5, 0, 0}, {-5, 8, 0}, {2, 8, 0}};
+  EXPECT_NEAR(
+    ugvcar_navigation2::pathAlignedProgressSpeed(
+      road, {0, 0, 0}, {-0.4, 0, 1},
+      1), 0.4, 1e-9);
+  EXPECT_LT(ugvcar_navigation2::pathAlignedProgressSpeed(road, {0, 0, 0}, {0, 0.4, 1}, 1), 0.0);
+  EXPECT_LT(ugvcar_navigation2::pathAlignedProgressSpeed(road, {-1, 0, 0}, {-0.6, 0, 1}, 1), 0.0);
+}
+
+TEST(PredictiveCollisionModel, ReturningToRoadBeatsMovingFartherOutside)
+{
+  const std::vector<TimedPoint2D> road{{0, 0, 0}, {8, 0, 0}};
+  EXPECT_GT(ugvcar_navigation2::pathAlignedProgressSpeed(road, {1, 0.8, 0}, {1, 0.4, 1}, 1), 0.0);
+  EXPECT_LT(ugvcar_navigation2::pathAlignedProgressSpeed(road, {1, 0.8, 0}, {1.1, 1.2, 1}, 1), 0.0);
+}
+
+TEST(PredictiveCollisionModel, PathProgressDoesNotJumpAcrossNearbyHairpin)
+{
+  const std::vector<TimedPoint2D> road{{0, 0, 0}, {10, 0, 0}, {10, 0.2, 0}, {0, 0.2, 0}};
+  EXPECT_LT(ugvcar_navigation2::pathAlignedProgressSpeed(road, {1, 0, 0}, {1, 0.2, 1}, 1), 0.0);
+  EXPECT_DOUBLE_EQ(ugvcar_navigation2::pathAlignedProgressSpeed({}, {0, 0, 0}, {1, 0, 1}, 1), 0.0);
+  EXPECT_THROW(
+    ugvcar_navigation2::pathAlignedProgressSpeed(
+      road, {0, 0, 0}, {1, 0, 1},
+      0), std::invalid_argument);
+}
+
 TEST(PredictiveCollisionModel, DetectsFasterObstacleCatchingFromBehind)
 {
   const std::vector<TimedPoint2D> trajectory{{0.0, 0.0, 0.0}, {2.0, 0.0, 5.0}};

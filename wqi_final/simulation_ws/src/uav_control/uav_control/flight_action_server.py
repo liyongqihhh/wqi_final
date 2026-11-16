@@ -1,6 +1,7 @@
 import math
 import threading
 import time
+from collections import deque
 
 import rclpy
 from geometry_msgs.msg import PoseStamped, Twist, Vector3Stamped
@@ -22,7 +23,9 @@ from uav_control.dynamic_path_planner import (
     plan_dynamic_path,
     vector_in_map_frame,
 )
-from uav_control.local_cloud_guard import LocalCloudGuard
+from uav_control.local_cloud_guard import LocalCloudGuard, motion_clearance
+from uav_control.cloud_motion_tracker import CloudMotionTracker
+from uav_control.flight_timing import flight_deadline_expired,replan_clock,recent_cloud_candidates
 from uav_control.position_setpoint import (
     adaptive_position_setpoint,
     vertical_position_setpoint,
@@ -56,6 +59,22 @@ class FlightActionServer(Node):
         self.validate_dynamic_paths=bool(self.get_parameter("validate_dynamic_paths").value)
         self.declare_parameter("sensor_path_clearance",3.0)
         self.declare_parameter("sensor_path_warning_distance",12.0)
+        self.declare_parameter("sensor_obstacle_speed_bound",1.0)
+        self.declare_parameter("sensor_response_time",.8)
+        self.declare_parameter("sensor_braking_acceleration",.8)
+        self.declare_parameter("dynamic_maximum_setpoint_step",.8)
+        self.declare_parameter("dynamic_cruise_enabled",False)
+        self.dynamic_cruise_enabled=bool(self.get_parameter("dynamic_cruise_enabled").value)
+        self.declare_parameter("dynamic_goal_wall_timeout",3600.)
+        self.sensor_obstacle_speed=float(self.get_parameter("sensor_obstacle_speed_bound").value)
+        self.sensor_response=float(self.get_parameter("sensor_response_time").value)
+        self.sensor_braking=float(self.get_parameter("sensor_braking_acceleration").value)
+        self.dynamic_setpoint_step=float(self.get_parameter("dynamic_maximum_setpoint_step").value)
+        self.dynamic_wall_timeout=float(self.get_parameter("dynamic_goal_wall_timeout").value)
+        if not all(math.isfinite(v) and v>0 for v in (
+                self.sensor_obstacle_speed,self.sensor_response,self.sensor_braking,
+                self.dynamic_setpoint_step,self.dynamic_wall_timeout)):
+            raise ValueError("Dynamic motion and watchdog parameters must be positive")
         self.sensor_path_clearance=float(self.get_parameter("sensor_path_clearance").value)
         sensor_warning=float(self.get_parameter("sensor_path_warning_distance").value)
         if (not math.isfinite(self.sensor_path_clearance) or self.sensor_path_clearance<1.8
@@ -169,7 +188,8 @@ class FlightActionServer(Node):
         self.nearest_obstacle_vector = None
         self.nearest_obstacle_updated_at = None
         self.cloud_guard=None
-        self.pending_cloud=None
+        self.cloud_tracker=CloudMotionTracker(speed_bound=self.sensor_obstacle_speed)
+        self.pending_cloud=deque(maxlen=8)
         if self.validate_dynamic_paths:
             from tf2_ros import Buffer,TransformListener
             self.cloud_tf=Buffer(node=self)
@@ -273,27 +293,33 @@ class FlightActionServer(Node):
         if message.header.frame_id!="uav/base_link":
             return
         with self.lock:
-            self.pending_cloud=(message,time.monotonic())
+            stamp=message.header.stamp.sec*1_000_000_000+message.header.stamp.nanosec
+            self.pending_cloud.append((stamp,message,time.monotonic()))
 
     def _sync_cloud(self):
         from rclpy.time import Time
         from tf2_ros import TransformException
         with self.lock:
-            pending=self.pending_cloud
-        if pending is None:return
-        message,received=pending
-        try:
-            tf=self.cloud_tf.lookup_transform("map",message.header.frame_id,Time.from_msg(message.header.stamp)).transform
-            q,t=tf.rotation,tf.translation
-            points=tuple(point_cloud2.read_points(message,field_names=("x","y","z"),skip_nans=True))
-            stamp=message.header.stamp.sec*1_000_000_000+message.header.stamp.nanosec
-            guard=LocalCloudGuard(points,(t.x,t.y,t.z),(q.x,q.y,q.z,q.w),stamp,received)
-        except (TransformException,ValueError,TypeError):
+            pending=tuple(self.pending_cloud)
+            after=self.cloud_guard.stamp_ns if self.cloud_guard is not None else -1
+        candidates=recent_cloud_candidates(pending,after,self.get_clock().now().nanoseconds,time.monotonic())
+        for stamp,message,received in candidates:
+            try:
+                tf=self.cloud_tf.lookup_transform("map",message.header.frame_id,Time.from_msg(message.header.stamp)).transform
+                q,t=tf.rotation,tf.translation
+                points=tuple(point_cloud2.read_points(message,field_names=("x","y","z"),skip_nans=True))
+                guard=LocalCloudGuard(points,(t.x,t.y,t.z),(q.x,q.y,q.z,q.w),stamp,received)
+            except (TransformException,ValueError,TypeError):
+                continue
+            with self.lock:
+                if self.cloud_guard is None or stamp>self.cloud_guard.stamp_ns:
+                    self.cloud_tracker.update(guard.points,stamp/1e9)
+                    guard.include_prediction(self.cloud_tracker.prediction_points())
+                    guard.motion_tracks=sum(float(math.sqrt(sum(v*v for v in t.velocity)))>=.15
+                        for t in self.cloud_tracker.tracks)
+                    self.cloud_guard=guard
+                self.pending_cloud=deque((e for e in self.pending_cloud if e[0]>stamp),maxlen=8)
             return
-        with self.lock:
-            if self.cloud_guard is None or stamp>=self.cloud_guard.stamp_ns:
-                self.cloud_guard=guard
-            if self.pending_cloud is pending:self.pending_cloud=None
 
     def _odom_callback(self, message: Odometry) -> None:
         with self.lock:
@@ -478,10 +504,14 @@ class FlightActionServer(Node):
             else self.default_timeout
         )
         started = time.monotonic()
+        started_sim=self.get_clock().now().nanoseconds/1e9
+        effective_clearance=self.sensor_path_clearance
+        last_motion_sim=started_sim
         within_tolerance_since = None
         period = 1.0 / max(self.command_rate, 1.0)
         last_distance = float("inf")
         active_dynamic_path = ()
+        active_dynamic_reason = ""
         avoidance_active = False
         last_dynamic_replan = -math.inf
         preferred_side = 1
@@ -536,6 +566,9 @@ class FlightActionServer(Node):
             last_distance = self._distance(odom, target)
             current_speed = self._speed(odom)
             now = time.monotonic()
+            simulation_now=self.get_clock().now().nanoseconds/1e9
+            deadline_expired=flight_deadline_expired(now-started,simulation_now-started_sim,
+                timeout,self.validate_dynamic_paths,self.dynamic_wall_timeout)
             active_safety_issue = ""
             obstacle_vector, vector_updated_at = (
                 self._nearest_obstacle_snapshot()
@@ -583,23 +616,30 @@ class FlightActionServer(Node):
                     active_safety_issue="3D_SENSOR_CLOUD_UNAVAILABLE"
                     vector_is_fresh=False
                 else:
-                    conflict=guard.first_conflict(current_position,target_position,self.sensor_path_clearance)
+                    required=motion_clearance(self.sensor_path_clearance,current_speed,
+                        (self.get_clock().now().nanoseconds-guard.stamp_ns)/1e9,
+                        self.sensor_obstacle_speed,self.sensor_response,self.sensor_braking)
+                    effective_clearance=max(required,effective_clearance-.15*max(0.,simulation_now-last_motion_sim))
+                    last_motion_sim=simulation_now
+                    conflict=guard.first_conflict(current_position,target_position,effective_clearance)
                     if conflict is not None:
                         delta=tuple(a-b for a,b in zip(conflict,current_position))
                         obstacle_vector=vector_in_map_frame(delta,(-orientation.x,-orientation.y,-orientation.z,orientation.w))
                         vector_is_fresh=True
                         vector_updated_at=self.sensor_now()
+            planning_now=replan_clock(now,simulation_now,self.validate_dynamic_paths)
             if (
                 self.dynamic_replanning_enabled
                 and not allow_platform_proximity
                 and vector_is_fresh
-                and now - last_dynamic_replan >= self.dynamic_replan_period
+                and planning_now - last_dynamic_replan >= self.dynamic_replan_period
             ):
                 try:
                     if guard is not None:
-                        dynamic_plan=guard.plan(current_position,target_position,self.sensor_path_clearance,
+                        dynamic_plan=guard.plan(current_position,target_position,effective_clearance,
                             self.minimum_altitude,self.maximum_altitude,preferred_side,
-                            active_dynamic_path if avoidance_active else ())
+                            active_dynamic_path if avoidance_active else (),
+                            active_dynamic_reason in ("voxel_egress_3d","retained_egress_3d"))
                     else:
                         dynamic_plan = plan_dynamic_path(current_position,target_position,
                             (orientation.x,orientation.y,orientation.z,orientation.w),obstacle_vector,
@@ -608,21 +648,23 @@ class FlightActionServer(Node):
                             self.dynamic_path_spacing,preferred_side,
                             rear_closing_speed=closing_speed_tracker.update(obstacle_vector,vector_updated_at))
                 except ValueError as error:
-                    last_dynamic_replan=now
+                    last_dynamic_replan=planning_now
                     self.get_logger().error(
                         f"Cannot calculate sensor-driven UAV path: {error}"
                     )
                 else:
-                    last_dynamic_replan = now
+                    last_dynamic_replan = planning_now
                     preferred_side = dynamic_plan.preferred_side
                     if dynamic_plan.avoiding:
                         dynamic_clear_observations = 0
                         active_dynamic_path = dynamic_plan.points
+                        active_dynamic_reason = dynamic_plan.reason
                         self._publish_dynamic_path(active_dynamic_path)
                         self.dynamic_status_pub.publish(String(
                             data=(
                                 f"REPLANNING:{dynamic_plan.reason};"
-                                f"points={len(active_dynamic_path)}"
+                                f"points={len(active_dynamic_path)};surface_buffer_m={effective_clearance:.2f};"
+                                f"moving_cloud_tracks={guard.motion_tracks if guard is not None else 0}"
                             )
                         ))
                         if not avoidance_active:
@@ -638,6 +680,7 @@ class FlightActionServer(Node):
                                 f"target={target_position}; "
                                 f"obstacle_body={tuple(round(v, 2) for v in obstacle_vector)}; "
                                 f"clearance={path_clearance:.2f}; "
+                                f"sensor_surface_buffer={effective_clearance:.2f}; "
                                 f"vertical={vertical_segment}; "
                                 f"safety={active_safety_issue or 'CLEAR'}"
                             )
@@ -691,7 +734,7 @@ class FlightActionServer(Node):
                 if avoidance_active and active_dynamic_path:
                     nearest=min(range(len(active_dynamic_path)),key=lambda i:math.dist(current_position,active_dynamic_path[i]))
                     remaining=(current_position,*active_dynamic_path[nearest:])
-                if not guard.path_clear(remaining,self.sensor_path_clearance):
+                if not guard.path_clear(remaining,effective_clearance):
                     cannot_plan_safely=True
                     active_safety_issue="3D_NO_COLLISION_FREE_LOCAL_PATH"
             if cannot_plan_safely:
@@ -709,11 +752,12 @@ class FlightActionServer(Node):
                         "WAITING_FOR_VALID_SENSOR_PATH",
                     )
                 )
-                if now - started >= timeout:
+                if deadline_expired:
                     goal_handle.abort()
                     result.success = False
                     result.message = (
-                        f"Flight goal timed out after {timeout:.1f}s while "
+                        f"Flight goal deadline reached ({timeout:.1f}s "
+                        f"{'simulation' if self.validate_dynamic_paths else 'wall'}, wall watchdog {self.dynamic_wall_timeout:.1f}s) while "
                         f"waiting for a valid sensor path"
                     )
                     result.final_position_error = float(last_distance)
@@ -731,16 +775,17 @@ class FlightActionServer(Node):
                 )
                 phase = "FOLLOWING_REPLANNED_PATH"
                 within_tolerance_since = None
-                if guard is not None and not guard.path_clear((current_position,navigation_target),self.sensor_path_clearance):
+                if guard is not None and not guard.path_clear((current_position,navigation_target),effective_clearance):
                     navigation_target=path_lookahead_point(current_position,active_dynamic_path,.4)
-                    if not guard.path_clear((current_position,navigation_target),self.sensor_path_clearance):
+                    if not guard.path_clear((current_position,navigation_target),effective_clearance):
                         navigation_target=current_position
             setpoint, approaching = adaptive_position_setpoint(
                 current_position,
                 navigation_target,
-                self.cruise_setpoint_step,
-                self.approach_setpoint_step,
+                min(self.cruise_setpoint_step,self.dynamic_setpoint_step) if guard is not None else self.cruise_setpoint_step,
+                min(self.approach_setpoint_step,self.dynamic_setpoint_step) if guard is not None else self.approach_setpoint_step,
                 self.approach_slowdown_distance,
+                arrival_target=target_position if self.dynamic_cruise_enabled and avoidance_active else None,
             )
             if vertical_segment and not avoidance_active:
                 velocity = odom.twist.twist.linear
@@ -768,8 +813,8 @@ class FlightActionServer(Node):
                 and current_speed <= self.default_velocity_tolerance
             ):
                 if within_tolerance_since is None:
-                    within_tolerance_since = now
-                elif now - within_tolerance_since >= self.settle_duration:
+                    within_tolerance_since = simulation_now if self.validate_dynamic_paths else now
+                elif (simulation_now if self.validate_dynamic_paths else now) - within_tolerance_since >= self.settle_duration:
                     self.dynamic_status_pub.publish(String(data="COMPLETED:target_reached"))
                     goal_handle.succeed()
                     result.success = True
@@ -779,10 +824,10 @@ class FlightActionServer(Node):
             else:
                 within_tolerance_since = None
 
-            if now - started >= timeout:
+            if deadline_expired:
                 goal_handle.abort()
                 result.success = False
-                result.message = f"Flight goal timed out after {timeout:.1f}s"
+                result.message = f"Flight goal deadline reached ({timeout:.1f}s {'simulation' if self.validate_dynamic_paths else 'wall'}, wall watchdog {self.dynamic_wall_timeout:.1f}s)"
                 result.final_position_error = float(last_distance)
                 return result
             time.sleep(period)

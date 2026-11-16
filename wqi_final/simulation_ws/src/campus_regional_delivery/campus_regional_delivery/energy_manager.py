@@ -183,6 +183,10 @@ class RegionalEnergyManager(Node):
         stamp = now.to_msg()
         data = self.model.status()
         missing = self.readiness()
+        if not data["energy_balance_ok"]:
+            missing.append("energy_balance")
+            self.get_logger().error("Nine-pack energy balance mismatch: " +
+                str(data["energy_balance_error_wh"]) + " Wh", throttle_duration_sec=10.)
         data.update(session_id=self.session_id, command_sequence=self.command_sequence,
             command_error=self.command_error, config_digest=self.config_digest,
             sample_sim_ns=now.nanoseconds, ready=not missing, missing_telemetry=missing,

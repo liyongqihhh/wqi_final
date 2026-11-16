@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import hashlib
 import math
 from pathlib import Path
 import random
@@ -19,6 +20,14 @@ class ObstacleRoute:
     activation_models: tuple[str, ...] = ()
     activation_point: tuple[float, float, float] = (0., 0., 0.)
     activation_distance: float = 0.
+    motion_mode: str = "route"
+    bounds_min: tuple[float, float, float] = ()
+    bounds_max: tuple[float, float, float] = ()
+
+
+def motion_seed(scenario_seed, route_name):
+    """Stable per-actor seed, unaffected by density or spawn ordering."""
+    return int.from_bytes(hashlib.sha256(f"{scenario_seed}:{route_name}".encode()).digest()[:4], "big")
 
 
 class ObstacleScenarioError(ValueError):
@@ -56,6 +65,9 @@ def load_obstacle_config(path):
             activation_point = tuple(float(v) for v in raw.get("activation_point", (0,0,0)))
             activation_distance = float(raw.get("activation_distance", 0.))
             priority = int(raw.get("priority", 1))
+            mode = str(raw.get("motion_mode", "route"))
+            lower = tuple(float(v) for v in raw.get("bounds_min", ()))
+            upper = tuple(float(v) for v in raw.get("bounds_max", ()))
         except (KeyError, TypeError, ValueError) as error:
             raise ObstacleScenarioError(
                 f"Invalid obstacle route '{name}': {error}"
@@ -74,6 +86,17 @@ def load_obstacle_config(path):
             raise ObstacleScenarioError(f"Route '{name}' contains non-finite values")
         if min(speed, radius, height) <= 0.0 or len(waypoints) < 2:
             raise ObstacleScenarioError(f"Route '{name}' has invalid geometry")
+        if mode not in ("route", "bounded_random"):
+            raise ObstacleScenarioError(f"Route '{name}' has invalid motion mode")
+        if mode == "bounded_random":
+            if (len(lower) != 3 or len(upper) != 3
+                    or not all(math.isfinite(v) for v in (*lower, *upper))
+                    or any(a > b for a, b in zip(lower, upper))
+                    or any(lower[i] >= upper[i] for i in (0, 1))
+                    or (layer == "ground" and lower[2] != upper[2])
+                    or (layer == "air" and lower[2] >= upper[2])
+                    or any(not a <= p <= b for a, p, b in zip(lower, waypoints[0], upper))):
+                raise ObstacleScenarioError(f"Route '{name}' has invalid random motion bounds/spawn")
         routes.append(ObstacleRoute(
             name=str(name),
             layer=layer,
@@ -84,6 +107,7 @@ def load_obstacle_config(path):
             group=str(raw.get("group", "")), priority=priority,
             activation_models=models, activation_point=activation_point,
             activation_distance=activation_distance,
+            motion_mode=mode, bounds_min=lower, bounds_max=upper,
         ))
     return densities, tuple(routes)
 

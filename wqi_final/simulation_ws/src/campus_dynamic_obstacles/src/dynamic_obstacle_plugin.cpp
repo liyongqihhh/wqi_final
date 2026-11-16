@@ -10,6 +10,7 @@
 #include <gazebo/common/Plugin.hh>
 #include <gazebo/physics/physics.hh>
 #include <ignition/math/Vector3.hh>
+#include "campus_dynamic_obstacles/bounded_random_motion.hpp"
 
 namespace gazebo
 {
@@ -50,6 +51,19 @@ public:
     if (waypoints_.size() < 2U) {
       gzerr << "CampusDynamicObstaclePlugin requires at least two waypoints\n";
       return;
+    }
+    if (sdf->HasElement("motion_mode") && sdf->Get<std::string>("motion_mode") == "bounded_random") {
+      const auto lower = sdf->Get<ignition::math::Vector3d>("bounds_min");
+      const auto upper = sdf->Get<ignition::math::Vector3d>("bounds_max");
+      try {
+        random_motion_ = std::make_unique<campus_dynamic_obstacles::BoundedRandomMotion>(
+          campus_dynamic_obstacles::Vector{lower.X(), lower.Y(), lower.Z()},
+          campus_dynamic_obstacles::Vector{upper.X(), upper.Y(), upper.Z()},
+          speed_, max_acceleration_, sdf->Get<unsigned int>("random_seed"));
+      } catch (const std::exception & error) {
+        gzerr << "Invalid random obstacle configuration: " << error.what() << "\n";
+        return;
+      }
     }
 
     model_->SetGravityMode(false);
@@ -107,6 +121,19 @@ private:
       }
     }
     const auto position = model_->WorldPose().Pos();
+    if (random_motion_) {
+      const double now = info.simTime.Double();
+      const double dt = last_update_time_seconds_ < 0. ? 0. :
+        std::clamp(now - last_update_time_seconds_, 0., .1);
+      last_update_time_seconds_ = now;
+      const auto velocity = model_->WorldLinearVel();
+      const auto next = random_motion_->Step(
+        {position.X(), position.Y(), position.Z()},
+        {velocity.X(), velocity.Y(), velocity.Z()}, dt);
+      model_->SetLinearVel({next[0], next[1], next[2]});
+      model_->SetAngularVel(ignition::math::Vector3d::Zero);
+      return;
+    }
     auto delta = waypoints_[target_index_] - position;
     if (delta.Length() <= tolerance_) {
       AdvanceTarget();
@@ -140,6 +167,7 @@ private:
   }
 
   physics::ModelPtr model_;
+  std::unique_ptr<campus_dynamic_obstacles::BoundedRandomMotion> random_motion_;
   event::ConnectionPtr update_connection_;
   std::vector<ignition::math::Vector3d> waypoints_;
   std::size_t target_index_{1U};

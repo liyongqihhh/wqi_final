@@ -99,10 +99,14 @@ bool PredictiveCollisionCritic::prepare(
   const geometry_msgs::msg::Pose2D & pose,
   const nav_2d_msgs::msg::Twist2D &,
   const geometry_msgs::msg::Pose2D & goal,
-  const nav_2d_msgs::msg::Path2D &)
+  const nav_2d_msgs::msg::Path2D & global_plan)
 {
   current_pose_ = pose;
   current_goal_ = goal;
+  reference_path_.clear();
+  for (const auto & point : global_plan.poses) {
+    reference_path_.push_back(TimedPoint2D{point.x, point.y, 0.0});
+  }
   motion_preference_active_ = false;
   evaluations_.clear();
   ugvcar_navigation2_interfaces::msg::DynamicObstacleArray tracks;
@@ -177,9 +181,9 @@ double PredictiveCollisionCritic::scoreTrajectory(
     const double duration = rclcpp::Duration(trajectory.time_offsets.back()).seconds();
     const auto & end = trajectory.poses.back();
     if (duration > 1.0e-6) {
-      progress_speed =
-        (std::hypot(current_goal_.x - current_pose_.x, current_goal_.y - current_pose_.y) -
-        std::hypot(current_goal_.x - end.x, current_goal_.y - end.y)) / duration;
+      progress_speed = pathAlignedProgressSpeed(
+        reference_path_, TimedPoint2D{current_pose_.x, current_pose_.y, 0.0},
+        TimedPoint2D{end.x, end.y, duration}, duration);
     }
   }
   evaluations_.push_back(
@@ -234,6 +238,7 @@ void PredictiveCollisionCritic::debrief(
            << (std::isfinite(selected->collision_time) ? "false" : "true");
   }
   stream << ";motion_preference_active=" << (motion_preference_active_ ? "true" : "false");
+  stream << ";progress_reference=local_path";
   if (selected) {
     stream << ";selected_goal_progress_speed=" << selected->goal_progress_speed;
     stream << ";selected_collision_exposure=" << selected->collision_exposure;

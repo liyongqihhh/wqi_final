@@ -1,4 +1,8 @@
 <library path="ugvcar_predictive_collision_critic">
+  <class name="ugvcar_navigation2::ApproachPathAlignCritic"
+    type="ugvcar_navigation2::ApproachPathAlignCritic" base_class_type="dwb_core::TrajectoryCritic">
+    <description>Preserve Nav2 path alignment during travel; disable projected-nose bias near arrival.</description>
+  </class>
   <class
     name="ugvcar_navigation2::PredictiveCollisionCritic"
     type="ugvcar_navigation2::PredictiveCollisionCritic"

@@ -40,6 +40,8 @@ def adaptive_position_setpoint(
     cruise_step: float,
     approach_step: float,
     slowdown_distance: float,
+    *,
+    arrival_target=None,
 ) -> tuple[tuple[float, float, float], bool]:
     """Limit position error and use a shorter lookahead near the destination."""
     current_point = _point3(current, "current")
@@ -54,7 +56,8 @@ def adaptive_position_setpoint(
     if approach_step > cruise_step:
         raise ValueError("approach_step must not exceed cruise_step")
 
-    distance = math.dist(current_point, target_point)
+    arrival_point = target_point if arrival_target is None else _point3(arrival_target, "arrival_target")
+    distance = math.dist(current_point, arrival_point)
     approaching = distance <= slowdown_distance
     maximum_step = approach_step if approaching else cruise_step
     return (

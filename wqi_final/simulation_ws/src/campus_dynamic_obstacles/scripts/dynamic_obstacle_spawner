@@ -14,6 +14,7 @@ from campus_dynamic_obstacles.scenario import (
     load_obstacle_config,
     obstacle_instance_name,
     select_routes,
+    motion_seed,
 )
 
 
@@ -51,13 +52,18 @@ class DynamicObstacleSpawner(Node):
         self.next_route_index = 0
 
     @staticmethod
-    def _sdf(name, route) -> str:
+    def _sdf(name, route, random_seed=42) -> str:
         escaped_name = xml.sax.saxutils.escape(name)
         points = "\n".join(
             f"      <waypoint>{x:.3f} {y:.3f} {z:.3f}</waypoint>"
             for x, y, z in route.waypoints
         )
         gate = ""
+        motion = f"<motion_mode>{route.motion_mode}</motion_mode>"
+        if route.motion_mode == "bounded_random":
+            motion += "\n<bounds_min>" + " ".join(map(str, route.bounds_min)) + "</bounds_min>"
+            motion += "\n<bounds_max>" + " ".join(map(str, route.bounds_max)) + "</bounds_max>"
+            motion += f"\n<random_seed>{motion_seed(random_seed, route.name)}</random_seed>"
         if route.activation_models:
             gate = "\n".join(f"<activation_model>{xml.sax.saxutils.escape(model)}</activation_model>"
                              for model in route.activation_models)
@@ -110,6 +116,7 @@ class DynamicObstacleSpawner(Node):
       <max_acceleration>1.20</max_acceleration>
 {points}
 {gate}
+{motion}
     </plugin>
     <plugin name='ground_truth_{escaped_name}' filename='libgazebo_ros_p3d.so'>
       <ros>
@@ -142,7 +149,7 @@ class DynamicObstacleSpawner(Node):
         route=self.routes[index]
         self.next_route_index+=1
         name=obstacle_instance_name(index+1,route)
-        request=SpawnEntity.Request(name=name,xml=self._sdf(name,route),robot_namespace="/dynamic_obstacles")
+        request=SpawnEntity.Request(name=name,xml=self._sdf(name,route,getattr(self,"seed",42)),robot_namespace="/dynamic_obstacles")
         future=self.client.call_async(request)
         future.add_done_callback(lambda completed:self._spawn_done(completed,name,route))
 
@@ -179,7 +186,10 @@ class DynamicObstacleSpawner(Node):
             "spawned":len(self.routes)-len(self.failures),"failures":self.failures,
             "routes":[{"model":obstacle_instance_name(i,r),"route":r.name,"layer":r.layer,
                        "region":r.group,"gate":r.activation_point,"radius":r.radius_m,
-                       "speed_mps":r.speed_mps,"waypoints":r.waypoints}
+                       "speed_mps":r.speed_mps,"waypoints":r.waypoints,
+                       "motion_mode":r.motion_mode,"bounds_min":r.bounds_min,"bounds_max":r.bounds_max,
+                       "motion_seed":motion_seed(self.seed,r.name),"max_acceleration_mps2":1.2,
+                       "correlation_time_s":2.5,"noise_fraction":.18}
                       for i,r in enumerate(self.routes,1)]}
         if not hasattr(self,"manifest_pub"):
             self.manifest_pub=self.create_publisher(String,"/dynamic_obstacles/manifest",

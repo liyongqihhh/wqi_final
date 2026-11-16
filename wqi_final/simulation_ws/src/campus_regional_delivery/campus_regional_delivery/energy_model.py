@@ -137,10 +137,18 @@ class FleetEnergyModel:
         self.input_power_w = delivered
 
     def status(self):
+        net = self.initial_energy_wh - sum(self.energies().values())
+        ledger_net = sum(car.drive_consumed_wh + car.charging_consumed_wh for car in self.cars.values())
+        if self.uav:
+            ledger_net += self.uav.consumed_energy_wh - self.uav.charged_energy_wh
+        error = net - ledger_net
         return {"energy_wh": self.energies(), "cargo_kg": dict(self.ledger.cargo),
             "payload_kg": self.ledger.payload, "charging_carrier": self.charging_carrier,
             "charging_input_power_w": self.input_power_w, "charge_target_soc": self.charge_target,
-            "system_net_consumed_wh": self.initial_energy_wh - sum(self.energies().values()),
+            "system_net_consumed_wh": net,
+            "ledger_net_consumed_wh": ledger_net,
+            "energy_balance_error_wh": error,
+            "energy_balance_ok": abs(error) <= 1e-6,
             "uav_consumed_wh": self.uav.consumed_energy_wh if self.uav else 0.,
             "uav_charged_wh": self.uav.charged_energy_wh if self.uav else 0.,
             "drive_consumed_wh": {ns: car.drive_consumed_wh for ns, car in self.cars.items()},

@@ -3,9 +3,65 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <utility>
 
 namespace ugvcar_navigation2
 {
+
+double pathAlignedProgressSpeed(
+  const std::vector<TimedPoint2D> & path,
+  const TimedPoint2D & start,
+  const TimedPoint2D & end,
+  const double duration)
+{
+  if (!std::isfinite(duration) || duration <= 0.0) {
+    throw std::invalid_argument("Path progress duration must be positive");
+  }
+  if (path.size() < 2) {
+    return 0.0;
+  }
+  const auto project = [&](const TimedPoint2D & point, double begin, double limit) {
+      double best_distance = std::numeric_limits<double>::infinity();
+      double best_arc = 0.0;
+      double arc = 0.0;
+      for (std::size_t i = 1; i < path.size(); ++i) {
+        const auto & a = path[i - 1];
+        const auto & b = path[i];
+        const double dx = b.x - a.x;
+        const double dy = b.y - a.y;
+        const double length = std::hypot(dx, dy);
+        if (length <= 1.0e-9) {
+          continue;
+        }
+        if (arc + length >= begin && arc <= limit) {
+          const double lower = std::max(0.0, (begin - arc) / length);
+          const double upper = std::min(1.0, (limit - arc) / length);
+          const double ratio = std::clamp(
+            ((point.x - a.x) * dx + (point.y - a.y) * dy) / (length * length),
+            lower, upper);
+          const double distance =
+            std::hypot(point.x - a.x - ratio * dx, point.y - a.y - ratio * dy);
+          if (distance < best_distance) {
+            best_distance = distance;
+            best_arc = arc + ratio * length;
+          }
+        }
+        arc += length;
+      }
+      return std::make_pair(best_arc, best_distance);
+    };
+  const auto origin = project(start, 0.0, std::numeric_limits<double>::infinity());
+  if (!std::isfinite(origin.second)) {
+    return 0.0;
+  }
+  // Do not jump to a later branch of a hairpin/self-intersection.
+  const double reach = 2.0 * std::hypot(end.x - start.x, end.y - start.y) + 0.5;
+  const auto finish = project(end, std::max(0.0, origin.first - reach), origin.first + reach);
+  if (!std::isfinite(finish.second)) {
+    return 0.0;
+  }
+  return (finish.first - origin.first + 2.0 * (origin.second - finish.second)) / duration;
+}
 
 namespace
 {

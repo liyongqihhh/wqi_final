@@ -97,7 +97,20 @@ class RegionalDynamicMonitor(Node):
             marker.color.r,marker.color.g,marker.color.b=(1.,.15,.1) if route["layer"]=="air" else (1.,.7,.05)
             marker.color.a=.9 if active else .35
             markers.append(marker)
-            if route["layer"]=="air":
+            if route.get("motion_mode") == "bounded_random":
+                line=Marker();line.header=marker.header;line.ns="random_motion_bounds";line.id=index
+                line.action=Marker.ADD;line.type=Marker.LINE_LIST;line.pose.orientation.w=1.
+                line.scale.x=.035;line.color=marker.color;line.color.a=.18
+                lo,hi=route["bounds_min"],route["bounds_max"]
+                corners=[(x,y,z) for x in (lo[0],hi[0]) for y in (lo[1],hi[1]) for z in (lo[2],hi[2])]
+                for a in range(8):
+                    for bit in (1,2,4):
+                        b=a^bit
+                        if a<b:
+                            line.points.extend(Point(x=float(v[0]),y=float(v[1]),z=float(v[2]))
+                                               for v in (corners[a],corners[b]))
+                markers.append(line)
+            elif route["layer"]=="air":
                 line=Marker();line.header=marker.header;line.ns="air_crossing_routes";line.id=index
                 line.action=Marker.ADD;line.type=Marker.LINE_STRIP;line.pose.orientation.w=1.
                 line.scale.x=.04;line.color.r=1.;line.color.b=.15;line.color.a=.35

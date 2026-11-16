@@ -7,7 +7,11 @@ DENSITIES={"none":{"ground":0,"air":0},"low":{"ground":6,"air":3},
     "very_high":{"ground":15,"air":12},"extreme":{"ground":18,"air":15}}
 
 
-def traffic_config(layout):
+def traffic_config(layout,ground_reference_speed=.4,motion_mode="route"):
+    if motion_mode not in ("route", "random"):
+        raise ValueError("Obstacle motion must be route or random")
+    if not math.isfinite(ground_reference_speed) or not .1<=ground_reference_speed<=1.:
+        raise ValueError("Ground encounter reference speed must be in [0.1, 1.0]")
     ground={
         "A":[((-39.5,19.),(2.1,2.5)),((-28.5,22.),(0.,3.)),
              ((-51.,22.),(6.,0.)),((-43.,34.),(3.2,0.)),
@@ -31,7 +35,7 @@ def traffic_config(layout):
             # Otherwise local collision protection can stop outside the gate.
             activation=([*waypoints[0][:2],.3] if index in (2,5) else [x,y,.3])
             activation_distance=(8. if index in (2,5)
-                else .4*(math.hypot(dx,dy)/speed+speed/(2*1.2))+.3)
+                else ground_reference_speed*(math.hypot(dx,dy)/speed+speed/(2*1.2))+.3)
             routes[f"regional_{region}_ground_{index+1}"]={"layer":"ground","group":region,
                 "priority":0 if index<2 else 1,"speed_mps":speed,
                 "radius_m":.35,"height_m":1.6,
@@ -56,5 +60,44 @@ def traffic_config(layout):
                              [x-nx*span,y-ny*span,height-dz]],
                 "activation_models":["campus_uav"],"activation_point":[x,y,height],
                 "activation_distance":9.0}
+    if motion_mode == "random":
+        _random_volumes(routes, layout, ground)
     return {"densities":DENSITIES,"routes":routes,
             "protected_stops":{name:pose[:2] for name,pose in layout.all_stops().items()}}
+
+
+def _random_volumes(routes, layout, ground):
+    """Admissible centre volumes, not paths. Keep receiving/landing bays clear."""
+    ground_spans = {
+        "A":[(1.3,1.3),(.65,1.8),(4.,1.8),(1.8,3.5),(1.8,1.8),(4.,1.8)],
+        "B":[(1.3,1.8),(1.8,3.),(3.,1.8),(1.5,1.5),(1.5,1.5),(1.8,3.)],
+        "C":[(3.5,1.8),(1.8,1.8),(4.,1.8),(1.8,3.5),(1.8,3.5),(4.,1.8)]}
+    for region, spec in layout.regions.items():
+        for index, ((x,y),_) in enumerate(ground[region]):
+            route = routes[f"regional_{region}_ground_{index+1}"]
+            dx,dy = ground_spans[region][index]
+            route.update(motion_mode="bounded_random",bounds_min=[x-dx,y-dy,.8],
+                         bounds_max=[x+dx,y+dy,.8],
+                         waypoints=[[x,y,.8],[x+.3*dx,y+.3*dy,.8]])
+            # Random traffic starts at insertion and never consults robots.
+            # The legacy route mode alone retains timed encounter gates.
+            route["activation_point"]=[x,y,.3]
+            route["activation_distance"]=0.
+            route["activation_models"]=[]
+        source=layout.hub["uav_pad"][:2]; target=spec["depot_pose"][:2]
+        length=math.dist(source,target)
+        nx,ny=-(target[1]-source[1])/length,(target[0]-source[0])/length
+        height=layout.data["flight"]["cruise_altitude"]
+        for index,fraction in enumerate((.45,.25,.62,.76,.88)):
+            route=routes[f"regional_{region}_air_{index+1}"]
+            lateral=(-2.,2.,.5,-1.5,-2.5)[index]
+            if region=="C" and index==3:
+                lateral=1.5
+            x=source[0]+fraction*(target[0]-source[0])+nx*lateral
+            y=source[1]+fraction*(target[1]-source[1])+ny*lateral
+            z=height+(-1.5,1.5,0.,3.,-3.)[index]
+            span=2.5
+            route.update(motion_mode="bounded_random",bounds_min=[x-span,y-span,z-2.],
+                         bounds_max=[x+span,y+span,z+2.],
+                         waypoints=[[x,y,z],[x+.2,y+.2,z+.2]],
+                         activation_distance=0.,activation_models=[])

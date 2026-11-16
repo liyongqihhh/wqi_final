@@ -13,13 +13,37 @@ from rclpy.action import GoalResponse
 LAYOUT=Path(__file__).parents[1]/"config/campus_regions.yaml"
 
 
+@pytest.mark.parametrize("state",[None,1,2,3])
+def test_failed_test_never_freezes_an_airborne_vehicle_as_if_recovered(state):
+    manager=SimpleNamespace(pause_on_failed_test=True,delivery_mode="cooperative",uav_state=state,
+        pause_physics=Mock())
+    assert RegionalMissionManager.pause_failed_test(manager) is False
+    manager.pause_physics.call_async.assert_not_called()
+
+
+def test_landed_failed_test_pauses_physics_before_reporting_terminal_status():
+    import json
+    manager=SimpleNamespace(pause_on_failed_test=True,delivery_mode="cooperative",uav_state=0,
+        carrier="ugv_01",pause_physics=Mock(),wait=Mock(),future=Mock(),simulation_safety_pub=Mock())
+    assert RegionalMissionManager.pause_failed_test(manager) is True
+    assert manager.simulation_paused
+    assert json.loads(manager.simulation_safety_pub.publish.call_args.args[0].data)["status"]=="PHYSICS_PAUSED_AFTER_FAILED_TEST"
+
+
+def test_paused_test_rejects_another_order_without_reserving_the_action():
+    manager=SimpleNamespace(simulation_paused=True,report_admission=Mock())
+    assert RegionalMissionManager.goal(manager,Mock())==GoalResponse.REJECT
+
+
 def recovery_manager(state=1,carrier="",fault=""):
     point=SimpleNamespace(x=-18.,y=22.,z=10.)
+    receiver=SimpleNamespace(pose=SimpleNamespace(pose=SimpleNamespace(
+        position=SimpleNamespace(x=-18.,y=22.,z=0.))))
     odom=SimpleNamespace(pose=SimpleNamespace(pose=SimpleNamespace(position=point)))
     manager=SimpleNamespace(uav_state=state,carrier=carrier,fault=fault,recovery_namespace="ugv_01",
         recovery_status=Mock(),set_navigation_paused=Mock(),settled=Mock(),verify_docked=Mock(),
         phase_to=Mock(),call=Mock(),select=Mock(),land=Mock(),fly=Mock(),land_at=Mock(),
-        uav_pose=odom,uav_received=time.monotonic(),poses={"ugv_01":odom},
+        uav_pose=odom,uav_received=time.monotonic(),poses={"ugv_01":receiver},
         received={"ugv_01":time.monotonic()},layout=RegionalLayout(LAYOUT))
     manager.wait=Mock()
     return manager
@@ -31,9 +55,25 @@ def test_cancel_recovery_returns_to_assigned_stationary_receiver_without_retakin
     manager.set_navigation_paused.assert_called_once_with(True,None)
     manager.settled.assert_called_once_with("ugv_01",None)
     assert manager.fly.call_count==2
-    assert manager.fly.call_args_list[0].args==((-18.,22.,15.),None,True)
+    assert manager.fly.call_args_list[0].args==((-18.,22.,15.),None,False)
     manager.land_at.assert_called_once_with((-18.,22.),None,"ugv_01")
     assert manager.recovery_status.call_args.args==("DOCKED",)
+
+
+@pytest.mark.parametrize("height",[14.8,15.,15.3])
+def test_cruise_recovery_does_not_disable_avoidance_for_tiny_vertical_correction(height):
+    manager=recovery_manager()
+    manager.uav_pose.pose.pose.position.z=height
+    RegionalMissionManager.recover_uav(manager)
+    assert manager.fly.call_count==1
+    assert manager.fly.call_args.args==((-18.,22.,15.),None)
+
+
+def test_recovery_clearance_exception_is_limited_to_departing_a_low_deck():
+    manager=recovery_manager()
+    manager.uav_pose.pose.pose.position.z=1.
+    RegionalMissionManager.recover_uav(manager)
+    assert manager.fly.call_args_list[0].args==((-18.,22.,15.),None,True)
 
 
 @pytest.mark.parametrize("state,fault",[(3,""),(1,"POSITION_ESTIMATE_LOST")])

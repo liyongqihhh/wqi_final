@@ -49,6 +49,13 @@ double collisionFreeMotionPenalty(
   double minimum_speed,
   double weight);
 
+// Signed arc progress plus return-to-path progress; path samples use XY only.
+double pathAlignedProgressSpeed(
+  const std::vector<TimedPoint2D> & path,
+  const TimedPoint2D & start,
+  const TimedPoint2D & end,
+  double duration);
+
 }  // namespace ugvcar_navigation2
 
 #endif  // UGVCAR_NAVIGATION2__PREDICTIVE_COLLISION_MODEL_HPP_
